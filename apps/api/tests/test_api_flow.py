@@ -52,6 +52,12 @@ def test_intake_dispatch_reporting_flow() -> None:
     assert assignment_payload["recommended_unit_id"]
     assert assignment_payload["predicted_eta_minutes"] >= 2
 
+    detail_response = client.get(f"/api/v1/dispatch/incident/{incident_id}")
+    assert detail_response.status_code == 200
+    detail_payload = detail_response.json()
+    assert detail_payload["incident"]["incident_id"] == incident_id
+    assert "timeline" in detail_payload
+
     officer_response = client.post(
         "/api/v1/officer/action",
         json={
@@ -113,6 +119,7 @@ def test_intake_dispatch_reporting_flow() -> None:
     report_payload = reporting_response.json()
     assert report_payload["incident_context"]["address"] == "901 Orange St, Redlands"
     assert any(event["event"] == "unit_assigned" for event in report_payload["audit_trail"])
+    assert report_payload["validation"]["has_disposition"] is False
 
     fetch_draft_response = client.get(f"/api/v1/reporting/draft/{report_id}")
     assert fetch_draft_response.status_code == 200
@@ -133,6 +140,18 @@ def test_intake_dispatch_reporting_flow() -> None:
     assert disposition_response.status_code == 200
     disposition_payload = disposition_response.json()
     assert disposition_payload["status"] == "CLOSED"
+
+    reporting_after_disposition = client.post(
+        "/api/v1/reporting/rms",
+        json={
+            "incident_id": incident_id,
+            "unit_id": assignment_payload["recommended_unit_id"],
+            "narrative": "Disposition complete. Case closed.",
+            "field_updates": {"disposition": "WARNING_ISSUED"},
+        },
+    )
+    assert reporting_after_disposition.status_code == 200
+    assert reporting_after_disposition.json()["validation"]["has_disposition"] is True
 
     queue_after_close = client.get("/api/v1/dispatch/queue")
     assert queue_after_close.status_code == 200

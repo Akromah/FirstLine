@@ -325,11 +325,21 @@ class InMemoryState:
                     "action": normalized_action,
                 }
             )
+            if normalized_action in {"ACCEPT", "EN_ROUTE"}:
+                incident["status"] = "EN_ROUTE"
+                unit = self._units.get(unit_id)
+                if unit:
+                    unit.status = "EN_ROUTE"
             if normalized_action in {"ARRIVED", "ON_SCENE"}:
                 incident["status"] = "ON_SCENE"
                 unit = self._units.get(unit_id)
                 if unit:
                     unit.status = "ON_SCENE"
+            if normalized_action in {"TRANSPORT", "TRANSPORTING"}:
+                incident["status"] = "TRANSPORT"
+                unit = self._units.get(unit_id)
+                if unit:
+                    unit.status = "BUSY"
             if normalized_action in {"CLEAR", "CLEARED"}:
                 incident["status"] = "CLOSED"
                 unit = self._units.get(unit_id)
@@ -359,6 +369,7 @@ class InMemoryState:
                 "arrest_made": arrest_made,
                 "citation_issued": citation_issued,
                 "force_used": force_used,
+                "requires_supervisor_review": force_used or arrest_made,
                 "closed_by_unit": unit_id,
                 "closed_at": now,
             }
@@ -375,6 +386,28 @@ class InMemoryState:
             if unit:
                 unit.status = "AVAILABLE"
             return incident.copy()
+
+    def get_incident_detail(self, incident_id: str) -> dict | None:
+        with self._lock:
+            incident = self._incidents.get(incident_id)
+            if not incident:
+                return None
+
+            created_at = parse_utc(incident["created_at"])
+            elapsed_minutes = int((datetime.now(timezone.utc) - created_at).total_seconds() // 60)
+            timeline = [event.copy() for event in incident["timeline"]]
+            timeline.sort(key=lambda event: event.get("time", ""), reverse=True)
+            latest_action = next(
+                (event for event in timeline if event.get("event") in {"officer_action", "unit_assigned"}),
+                None,
+            )
+
+            return {
+                "incident": incident.copy(),
+                "timeline": timeline,
+                "elapsed_minutes": max(0, elapsed_minutes),
+                "latest_action": latest_action,
+            }
 
     def upsert_report_draft(
         self,

@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+from fastapi import HTTPException
 
 from app.core.state import state
 from app.modules.dispatch.service import (
@@ -23,6 +24,14 @@ def list_units() -> dict:
 def list_dispatch_queue() -> dict:
     incidents = state.list_incident_summaries()
     return {"incidents": [incident.model_dump() for incident in incidents]}
+
+
+@router.get("/incident/{incident_id}")
+def get_incident_detail(incident_id: str) -> dict:
+    detail = state.get_incident_detail(incident_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return detail
 
 
 @router.post("/assign", response_model=AssignmentResponse)

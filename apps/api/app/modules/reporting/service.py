@@ -22,6 +22,7 @@ class ReportDraftRequest(BaseModel):
 
 def build_rms_payload(payload: ReportCreateRequest) -> dict:
     incident = state.get_incident(payload.incident_id)
+    disposition = incident.get("disposition") if incident else None
     audit_trail = state.get_incident_timeline(payload.incident_id)
     audit_trail.append(
         {
@@ -42,6 +43,7 @@ def build_rms_payload(payload: ReportCreateRequest) -> dict:
         "incident_id": payload.incident_id,
         "unit_id": payload.unit_id,
         "report_id": draft["report_id"],
+        "submission_status": "READY_FOR_REVIEW" if disposition else "DRAFT_INCOMPLETE",
         "narrative_template": "Auto-generated from CAD timeline",
         "narrative": payload.narrative,
         "structured_fields": payload.field_updates,
@@ -50,6 +52,12 @@ def build_rms_payload(payload: ReportCreateRequest) -> dict:
             "call_type": incident["call_type"] if incident else "Unknown",
             "priority": incident["priority"] if incident else None,
             "address": incident["address"] if incident else None,
+            "disposition": disposition,
+        },
+        "validation": {
+            "has_disposition": bool(disposition),
+            "requires_supervisor_review": bool(disposition and disposition.get("requires_supervisor_review")),
+            "warnings": [] if disposition else ["Disposition has not been finalized."],
         },
         "evidence_links": [
             {"type": "photo", "uri": f"evidence://incidents/{payload.incident_id}/photo-1"},

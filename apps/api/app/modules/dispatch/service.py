@@ -38,6 +38,7 @@ class DispositionResponse(BaseModel):
     incident_id: str
     status: str
     disposition: dict
+    error: str | None = None
 
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -106,6 +107,29 @@ def choose_unit(payload: AssignmentRequest, commit: bool = True) -> AssignmentRe
 
 
 def finalize_disposition(payload: DispositionRequest) -> DispositionResponse:
+    incident = state.get_incident(payload.incident_id)
+    if not incident:
+        return DispositionResponse(
+            incident_id=payload.incident_id,
+            status="NOT_FOUND",
+            disposition={},
+            error="Incident not found.",
+        )
+    if incident["status"] in {"NEW"}:
+        return DispositionResponse(
+            incident_id=payload.incident_id,
+            status=incident["status"],
+            disposition={},
+            error="Cannot finalize disposition before dispatch assignment.",
+        )
+    if len(payload.summary.strip()) < 15:
+        return DispositionResponse(
+            incident_id=payload.incident_id,
+            status=incident["status"],
+            disposition={},
+            error="Disposition summary must be at least 15 characters.",
+        )
+
     incident = state.set_incident_disposition(
         incident_id=payload.incident_id,
         unit_id=payload.unit_id,
@@ -120,6 +144,7 @@ def finalize_disposition(payload: DispositionRequest) -> DispositionResponse:
             incident_id=payload.incident_id,
             status="NOT_FOUND",
             disposition={},
+            error="Incident not found.",
         )
     return DispositionResponse(
         incident_id=incident["incident_id"],

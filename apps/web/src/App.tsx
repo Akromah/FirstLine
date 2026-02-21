@@ -29,6 +29,18 @@ type AIAssist = {
   confidence: number;
 };
 
+type IncidentDetail = {
+  incident: {
+    incident_id: string;
+    status: string;
+    assigned_unit_id?: string | null;
+    disposition?: Record<string, unknown> | null;
+  };
+  elapsed_minutes: number;
+  latest_action?: { event?: string; action?: string; unit_id?: string; time?: string } | null;
+  timeline: Array<{ event: string; time: string; unit_id?: string; action?: string; summary?: string }>;
+};
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
 const MAP_STYLE_URL =
   import.meta.env.VITE_MAP_STYLE_URL ?? "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
@@ -67,6 +79,7 @@ export default function App() {
   const [command, setCommand] = useState<any>(null);
   const [mapData, setMapData] = useState<any>(null);
   const [reportHub, setReportHub] = useState<ReportingHub | null>(null);
+  const [incidentDetail, setIncidentDetail] = useState<IncidentDetail | null>(null);
 
   const [selectedIncidentId, setSelectedIncidentId] = useState("");
   const selectedIncident = useMemo(
@@ -197,6 +210,22 @@ export default function App() {
     if (!selectedIncident) return;
     setReportNarrative(`Incident ${selectedIncident.incident_id}: ${selectedIncident.call_type} at ${selectedIncident.address}.`);
   }, [selectedIncident?.incident_id]);
+
+  useEffect(() => {
+    async function loadDetail() {
+      if (!selectedIncident) {
+        setIncidentDetail(null);
+        return;
+      }
+      try {
+        const detail = await fetchJson<IncidentDetail>(`/api/v1/dispatch/incident/${selectedIncident.incident_id}`);
+        setIncidentDetail(detail);
+      } catch {
+        setIncidentDetail(null);
+      }
+    }
+    loadDetail();
+  }, [selectedIncident?.incident_id, queue.length]);
 
   async function handleCreateCall(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -333,7 +362,10 @@ export default function App() {
           field_updates: parseFields(reportFields),
         }),
       });
-      setReportSummary(`RMS payload ${payload.report_id} built with ${payload.audit_trail.length} audit events.`);
+      const warnings = (payload.validation?.warnings ?? []).join(" ");
+      setReportSummary(
+        `RMS payload ${payload.report_id} ${payload.submission_status}. ${warnings}`.trim()
+      );
       await refreshDashboard();
     } catch (error) {
       setBanner(`RMS export failed: ${(error as Error).message}`);
@@ -358,6 +390,10 @@ export default function App() {
           force_used: forceUsed,
         }),
       });
+      if (result.error) {
+        setBanner(result.error);
+        return;
+      }
       setBanner(`Incident ${result.incident_id} closed as ${result.disposition.disposition_code}.`);
       await refreshDashboard();
     } catch (error) {
@@ -408,6 +444,9 @@ export default function App() {
       setLoading(false);
     }
   }
+
+  const dispositionReady = Boolean(incidentDetail?.incident?.disposition);
+  const recentTimeline = (incidentDetail?.timeline ?? []).slice(0, 4);
 
   if (!started) {
     return (
@@ -483,6 +522,30 @@ export default function App() {
             ))}
           </article>
           <article className="card panel">
+            <h2>Field Operations</h2>
+            <p className="section-subtitle">
+              {selectedIncident?.incident_id ?? "No incident"} · Elapsed {incidentDetail?.elapsed_minutes ?? 0}m
+            </p>
+            <div className="dispatch-banner">
+              Latest action:{" "}
+              {incidentDetail?.latest_action?.action ??
+                incidentDetail?.latest_action?.event ??
+                "No action recorded"}
+            </div>
+            <div className="timeline-list">
+              {recentTimeline.map((event, index) => (
+                <div key={`${event.time}-${index}`} className="timeline-item">
+                  <strong>{event.event}</strong>
+                  <p>
+                    {event.time}
+                    {event.action ? ` · ${event.action}` : ""}
+                    {event.unit_id ? ` · ${event.unit_id}` : ""}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </article>
+          <article className="card panel">
             <h2>Report Writing Hub</h2>
             <p className="section-subtitle">Incident: <strong>{selectedIncident?.incident_id ?? "None selected"}</strong></p>
             <div className="dispatch-form-grid">
@@ -491,8 +554,13 @@ export default function App() {
             </div>
             <div className="button-grid">
               <button type="button" onClick={handleSaveDraft} disabled={loading}>Save Draft</button>
-              <button type="button" onClick={handleGenerateReport} disabled={loading}>Submit RMS Payload</button>
+              <button type="button" onClick={handleGenerateReport} disabled={loading || !dispositionReady}>
+                Submit RMS Payload
+              </button>
             </div>
+            {!dispositionReady ? (
+              <div className="dispatch-banner">Finalize disposition before final RMS submission.</div>
+            ) : null}
             {reportSummary ? <div className="dispatch-banner">{reportSummary}</div> : null}
             <div className="hub-grid">
               <div className="hub-col">
@@ -590,6 +658,7 @@ export default function App() {
             </div>
             <div className="dev-actions"><button type="button" onClick={handleStatusUpdate} disabled={loading}>Push Status Update</button></div>
             <div className="call-actions">
+              <button type="button" onClick={() => handleOfficerAction("ACCEPT")} disabled={loading}>Accept</button>
               <button type="button" onClick={() => handleOfficerAction("ARRIVED")} disabled={loading}>Arrived</button>
               <button type="button" onClick={() => handleOfficerAction("ON_SCENE")} disabled={loading}>On Scene</button>
               <button type="button" onClick={() => handleOfficerAction("CLEAR")} disabled={loading}>Clear Call</button>

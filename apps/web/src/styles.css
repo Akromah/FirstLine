@@ -590,7 +590,7 @@ body {
 .call-actions {
   margin-top: 10px;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 8px;
 }
 
@@ -725,6 +725,31 @@ body {
 
 .intel-row {
   margin-bottom: 8px;
+}
+
+.timeline-list {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.timeline-item {
+  border: 1px solid #264262;
+  border-radius: 10px;
+  background: #0f1e33;
+  padding: 8px;
+}
+
+.timeline-item strong {
+  display: block;
+  color: #e8f1ff;
+  font-size: 12px;
+}
+
+.timeline-item p {
+  margin: 4px 0 0;
+  color: #b6c8e6;
+  font-size: 11px;
 }
 
 @media (max-width: 1200px) {
