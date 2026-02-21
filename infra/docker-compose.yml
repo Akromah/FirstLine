@@ -1,0 +1,38 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: firstline
+    ports:
+      - "5432:5432"
+    volumes:
+      - firstline_postgres:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  api:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - ./apps/api:/app
+    command: sh -c "pip install -e . && uvicorn app.main:app --host 0.0.0.0 --port 4000 --reload"
+    environment:
+      APP_PORT: 4000
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/firstline
+      REDIS_URL: redis://redis:6379/0
+      CORS_ORIGINS: '[\"http://localhost:5173\"]'
+    ports:
+      - "4000:4000"
+    depends_on:
+      - postgres
+      - redis
+
+volumes:
+  firstline_postgres:

@@ -1,0 +1,23 @@
+from fastapi import APIRouter, HTTPException
+
+from app.modules.intake.service import (
+    IntakeRequest,
+    IntakeResponse,
+    get_incident_risk_profile,
+    process_intake,
+)
+
+router = APIRouter()
+
+
+@router.post("/calls", response_model=IntakeResponse)
+def create_call(payload: IntakeRequest) -> IntakeResponse:
+    return process_intake(payload)
+
+
+@router.get("/risk/{incident_id}")
+def get_risk_profile(incident_id: str) -> dict:
+    profile = get_incident_risk_profile(incident_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return profile

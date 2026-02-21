@@ -1,0 +1,7 @@
+README.md
+pyproject.toml
+src/firstline_api.egg-info/PKG-INFO
+src/firstline_api.egg-info/SOURCES.txt
+src/firstline_api.egg-info/dependency_links.txt
+src/firstline_api.egg-info/requires.txt
+src/firstline_api.egg-info/top_level.txt
