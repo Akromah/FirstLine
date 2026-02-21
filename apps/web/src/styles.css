@@ -752,6 +752,62 @@ body {
   font-size: 11px;
 }
 
+.dictation-controls {
+  border: 1px solid #29476f;
+  border-radius: 10px;
+  background: #0f1d33;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+
+.dictation-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.dictation-row button {
+  border: 1px solid #365a8c;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #1b3254 0%, #132742 100%);
+  color: #e7f0ff;
+  min-height: 38px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.dictation-row button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.dictation-status {
+  margin-top: 8px;
+  border: 1px solid #2d4d77;
+  border-radius: 8px;
+  background: #132845;
+  color: #bed2f3;
+  padding: 7px 9px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.dictation-status.live {
+  border-color: #2fbc67;
+  background: #173a32;
+  color: #d9ffea;
+}
+
+.dictation-preview {
+  margin-top: 8px;
+  border: 1px dashed #3d6398;
+  border-radius: 8px;
+  background: #11213a;
+  color: #dae8ff;
+  padding: 8px 9px;
+  font-size: 12px;
+}
+
 @media (max-width: 1200px) {
   .layout {
     grid-template-columns: 1fr;
@@ -794,6 +850,10 @@ body {
   }
 
   .hub-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dictation-row {
     grid-template-columns: 1fr;
   }
 }

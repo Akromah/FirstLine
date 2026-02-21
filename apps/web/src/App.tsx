@@ -40,6 +40,7 @@ type IncidentDetail = {
   latest_action?: { event?: string; action?: string; unit_id?: string; time?: string } | null;
   timeline: Array<{ event: string; time: string; unit_id?: string; action?: string; summary?: string }>;
 };
+type ViewMode = "Dispatch" | "Field" | "Report" | "Intel";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
 const MAP_STYLE_URL =
@@ -71,6 +72,7 @@ function parseFields(raw: string): Record<string, string> {
 export default function App() {
   const [started, setStarted] = useState(false);
   const [sessionRole, setSessionRole] = useState("Dispatcher");
+  const [viewMode, setViewMode] = useState<ViewMode>("Dispatch");
   const [loading, setLoading] = useState(false);
   const [banner, setBanner] = useState("Console initialized.");
 
@@ -111,6 +113,10 @@ export default function App() {
   const [reportNarrative, setReportNarrative] = useState("Initial narrative pending.");
   const [reportFields, setReportFields] = useState("case_type=Domestic;supervisor_review=Pending");
   const [reportSummary, setReportSummary] = useState("");
+  const [dictationSupported, setDictationSupported] = useState(false);
+  const [isDictating, setIsDictating] = useState(false);
+  const [dictationStatus, setDictationStatus] = useState("Dictation idle.");
+  const [dictationInterim, setDictationInterim] = useState("");
 
   const [intelQuery, setIntelQuery] = useState("Brandon");
   const [lookup, setLookup] = useState<LookupResult | null>(null);
@@ -122,6 +128,23 @@ export default function App() {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markerRefs = useRef<maplibregl.Marker[]>([]);
+  const selectedIncidentIdRef = useRef(selectedIncidentId);
+  const statusUnitIdRef = useRef(statusUnitId);
+  const dictationRef = useRef<any>(null);
+
+  useEffect(() => {
+    selectedIncidentIdRef.current = selectedIncidentId;
+  }, [selectedIncidentId]);
+
+  useEffect(() => {
+    statusUnitIdRef.current = statusUnitId;
+  }, [statusUnitId]);
+
+  useEffect(() => {
+    if (sessionRole === "Officer") setViewMode("Field");
+    if (sessionRole === "Supervisor") setViewMode("Dispatch");
+    if (sessionRole === "Dispatcher") setViewMode("Dispatch");
+  }, [sessionRole]);
 
   async function refreshDashboard() {
     try {
@@ -137,8 +160,8 @@ export default function App() {
       setCommand(c);
       setMapData(m);
       setReportHub(h);
-      if (!selectedIncidentId && q.incidents.length > 0) setSelectedIncidentId(q.incidents[0].incident_id);
-      if (!statusUnitId && u.units.length > 0) setStatusUnitId(u.units[0].unit_id);
+      if (!selectedIncidentIdRef.current && q.incidents.length > 0) setSelectedIncidentId(q.incidents[0].incident_id);
+      if (!statusUnitIdRef.current && u.units.length > 0) setStatusUnitId(u.units[0].unit_id);
     } catch (error) {
       setBanner(`API sync failed: ${(error as Error).message}`);
     }
@@ -226,6 +249,63 @@ export default function App() {
     }
     loadDetail();
   }, [selectedIncident?.incident_id, queue.length]);
+
+  useEffect(() => {
+    const speechCtor = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
+    if (!speechCtor) {
+      setDictationSupported(false);
+      setDictationStatus("Dictation unavailable in this browser.");
+      return;
+    }
+
+    const recognition = new speechCtor();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+
+    recognition.onresult = (event: any) => {
+      let finalTranscript = "";
+      let interimTranscript = "";
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const result = event.results[i];
+        const transcript = result?.[0]?.transcript ?? "";
+        if (result.isFinal) finalTranscript += transcript;
+        else interimTranscript += transcript;
+      }
+
+      if (finalTranscript.trim()) {
+        setReportNarrative((prev) => `${prev.trim()} ${finalTranscript.trim()}`.trim());
+        setDictationStatus("Dictation captured.");
+      } else if (interimTranscript.trim()) {
+        setDictationStatus("Listening...");
+      }
+      setDictationInterim(interimTranscript.trim());
+    };
+
+    recognition.onerror = (event: any) => {
+      setDictationStatus(`Dictation error: ${event?.error ?? "unknown"}.`);
+      setIsDictating(false);
+      setDictationInterim("");
+    };
+
+    recognition.onend = () => {
+      setIsDictating(false);
+      setDictationInterim("");
+      setDictationStatus((current) => (current.startsWith("Dictation error") ? current : "Dictation stopped."));
+    };
+
+    dictationRef.current = recognition;
+    setDictationSupported(true);
+
+    return () => {
+      try {
+        recognition.stop();
+      } catch {
+        // noop
+      }
+      dictationRef.current = null;
+    };
+  }, []);
 
   async function handleCreateCall(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -374,6 +454,26 @@ export default function App() {
     }
   }
 
+  function handleStartDictation() {
+    if (!dictationSupported || !dictationRef.current || isDictating) return;
+    try {
+      dictationRef.current.start();
+      setIsDictating(true);
+      setDictationInterim("");
+      setDictationStatus("Listening...");
+    } catch {
+      setDictationStatus("Unable to start dictation. Check microphone permission.");
+    }
+  }
+
+  function handleStopDictation() {
+    if (!dictationRef.current || !isDictating) return;
+    dictationRef.current.stop();
+    setIsDictating(false);
+    setDictationInterim("");
+    setDictationStatus("Dictation stopped.");
+  }
+
   async function handleFinalizeDisposition() {
     if (!selectedIncident || !statusUnitId) return;
     setLoading(true);
@@ -445,8 +545,19 @@ export default function App() {
     }
   }
 
+  async function handleQuickCode(action: "EN_ROUTE" | "ON_SCENE" | "CLEAR") {
+    await handleOfficerAction(action);
+    if (action === "EN_ROUTE") setStatusValue("EN_ROUTE");
+    if (action === "ON_SCENE") setStatusValue("ON_SCENE");
+    if (action === "CLEAR") setStatusValue("AVAILABLE");
+  }
+
   const dispositionReady = Boolean(incidentDetail?.incident?.disposition);
   const recentTimeline = (incidentDetail?.timeline ?? []).slice(0, 4);
+  const showDispatch = viewMode === "Dispatch";
+  const showField = viewMode === "Field";
+  const showReport = viewMode === "Report";
+  const showIntel = viewMode === "Intel";
 
   if (!started) {
     return (
@@ -548,6 +659,18 @@ export default function App() {
           <article className="card panel">
             <h2>Report Writing Hub</h2>
             <p className="section-subtitle">Incident: <strong>{selectedIncident?.incident_id ?? "None selected"}</strong></p>
+            <div className="dictation-controls">
+              <div className="dictation-row">
+                <button type="button" onClick={handleStartDictation} disabled={loading || !dictationSupported || isDictating}>
+                  {isDictating ? "Listening..." : "Start Dictation"}
+                </button>
+                <button type="button" onClick={handleStopDictation} disabled={!isDictating}>
+                  Stop Dictation
+                </button>
+              </div>
+              <div className={`dictation-status ${isDictating ? "live" : ""}`}>{dictationStatus}</div>
+              {dictationInterim ? <div className="dictation-preview">{dictationInterim}</div> : null}
+            </div>
             <div className="dispatch-form-grid">
               <label className="form-field wide">Narrative Draft<textarea value={reportNarrative} onChange={(e) => setReportNarrative(e.target.value)} /></label>
               <label className="form-field wide">Structured Fields (key=value;key2=value2)<input value={reportFields} onChange={(e) => setReportFields(e.target.value)} /></label>
