@@ -65,6 +65,46 @@ body {
   align-items: center;
 }
 
+.live-sim-strip {
+  margin-top: 10px;
+  border: 1px solid #2d4f7c;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #122844 0%, #0e1f36 100%);
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.live-sim-cta {
+  border: 1px solid #4f8dff;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #4f8dff 0%, #386fd7 100%);
+  color: #f6fbff;
+  min-height: 44px;
+  padding: 0 14px;
+  font-weight: 800;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.live-sim-cta.active {
+  border-color: #2fbc67;
+  background: linear-gradient(180deg, #2fbc67 0%, #228b4c 100%);
+}
+
+.live-sim-meta strong {
+  display: block;
+  color: #e8f2ff;
+  font-size: 13px;
+}
+
+.live-sim-meta p {
+  margin: 3px 0 0;
+  color: #bad0ef;
+  font-size: 12px;
+}
+
 .role-badge {
   border: 1px solid #ccd9ef;
   border-radius: 999px;
@@ -90,6 +130,14 @@ body {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.active-module-row {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .chip {
@@ -1472,6 +1520,16 @@ body {
 
   .module-groups {
     grid-template-columns: 1fr;
+  }
+
+  .live-sim-strip {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .active-module-row {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .module-overlay {

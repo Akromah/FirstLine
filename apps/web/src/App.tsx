@@ -545,6 +545,12 @@ function incidentDispatchLabel(incident: IncidentSummary | null | undefined): st
   return code ? `${code} ${crime}` : crime;
 }
 
+function defaultViewForRole(role: string): ViewMode {
+  if (role === "Officer") return "Field";
+  if (role === "Supervisor") return "Report";
+  return "Dispatch";
+}
+
 export default function App() {
   const [started, setStarted] = useState(false);
   const [sessionRole, setSessionRole] = useState("Dispatcher");
@@ -812,18 +818,8 @@ export default function App() {
   }, [selectedIncident?.incident_id, queue.length]);
 
   useEffect(() => {
-    if (sessionRole === "Officer") {
-      setViewMode("Field");
-      setActiveModule("fieldOps");
-    }
-    if (sessionRole === "Supervisor") {
-      setViewMode("Dispatch");
-      setActiveModule("reviewQueue");
-    }
-    if (sessionRole === "Dispatcher") {
-      setViewMode("Dispatch");
-      setActiveModule("queue");
-    }
+    setViewMode(defaultViewForRole(sessionRole));
+    setActiveModule("mapOnly");
   }, [sessionRole]);
 
   async function refreshDashboard() {
@@ -878,9 +874,10 @@ export default function App() {
   }
   useEffect(() => {
     refreshDashboard();
-    const timer = window.setInterval(refreshDashboard, 12000);
+    const intervalMs = patrolStatus?.enabled ? 3000 : 12000;
+    const timer = window.setInterval(refreshDashboard, intervalMs);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [patrolStatus?.enabled]);
 
   useEffect(() => {
     if (!started) return;
@@ -1305,32 +1302,9 @@ export default function App() {
   }, [started, viewMode, selectedIncident?.incident_id, statusUnitId]);
 
   useEffect(() => {
-    function onGlobalKeyDown(event: KeyboardEvent) {
-      if (!started || !event.altKey) return;
-      const active = document.activeElement?.tagName;
-      if (active === "INPUT" || active === "TEXTAREA" || active === "SELECT") return;
-
-      if (event.key === "1") {
-        event.preventDefault();
-        setViewMode("Dispatch");
-      }
-      if (event.key === "2") {
-        event.preventDefault();
-        setViewMode("Field");
-      }
-      if (event.key === "3") {
-        event.preventDefault();
-        setViewMode("Report");
-      }
-      if (event.key === "4") {
-        event.preventDefault();
-        setViewMode("Intel");
-      }
-    }
-
-    window.addEventListener("keydown", onGlobalKeyDown);
-    return () => window.removeEventListener("keydown", onGlobalKeyDown);
-  }, [started]);
+    // Role consoles are intentionally locked after login.
+    setViewMode(defaultViewForRole(sessionRole));
+  }, [started, sessionRole]);
 
   useEffect(() => {
     function onPaletteToggle(event: KeyboardEvent) {
@@ -1481,6 +1455,7 @@ export default function App() {
       } else {
         const result = await fetchJson<{
           dispatchable_units: number;
+          initial_calls: number;
           max_active_calls: number;
           next_call_due_at?: string | null;
         }>("/api/v1/intake/patrol-sim/start", {
@@ -1488,8 +1463,8 @@ export default function App() {
           body: JSON.stringify({
             clear_existing: true,
             live_mode: true,
-            tick_seconds: 10,
-            initial_calls: 2,
+            tick_seconds: 8,
+            initial_calls: 4,
             logged_in_unit_id: statusUnitId || null,
             min_call_interval_seconds: 30,
             max_call_interval_seconds: 120,
@@ -1498,10 +1473,13 @@ export default function App() {
             max_call_duration_seconds: 600,
           }),
         });
+        setShowMapUnits(true);
+        setShowMapIncidents(true);
+        setShowMapBeats(true);
         setBanner(
-          `Live simulation active: ${result.dispatchable_units} units, max ${result.max_active_calls} active calls.`
+          `Live simulation active: ${result.dispatchable_units} patrol units roaming, ${result.initial_calls} active starter calls, max ${result.max_active_calls}.`
         );
-        setActiveModule("queue");
+        setActiveModule(sessionRole === "Officer" ? "assignedDeck" : "queue");
       }
       await refreshDashboard();
     } catch (error) {
@@ -2223,10 +2201,14 @@ export default function App() {
 
   const recentTimeline = (incidentDetail?.timeline ?? []).slice(0, 4);
   const liveSimulationRunning = Boolean(patrolStatus?.enabled && patrolStatus.profile === "LIVE_DEV");
-  const showDispatch = viewMode === "Dispatch";
-  const showField = viewMode === "Field";
-  const showReport = viewMode === "Report";
-  const showIntel = viewMode === "Intel";
+  const isDispatcher = sessionRole === "Dispatcher";
+  const isOfficer = sessionRole === "Officer";
+  const isSupervisor = sessionRole === "Supervisor";
+  const roleDefaultView = defaultViewForRole(sessionRole);
+  const canDispatchModules = isDispatcher || isSupervisor;
+  const canOfficerModules = isOfficer;
+  const canReportModules = isOfficer || isSupervisor;
+  const canIntelModules = true;
   const quickActionLookup = useMemo(() => {
     const lookup: Record<string, { enabled: boolean; reason: string }> = {};
     (quickActionsPolicy?.actions ?? []).forEach((item) => {
@@ -2359,25 +2341,25 @@ export default function App() {
   );
   const moduleButtons: ModuleButton[] = [
     { id: "mapOnly", label: "Map Only", icon: "MAP", group: "ops", visible: true },
-    { id: "intake", label: "Intake", icon: "911", group: "ops", visible: showDispatch },
-    { id: "queue", label: "Active Queue", icon: "Q", group: "ops", visible: showDispatch || showField || showReport, badge: moduleCounts.queue },
-    { id: "priorityRadar", label: "Priority Radar", icon: "RAD", group: "ops", visible: showDispatch || showField, badge: moduleCounts.priorityRadar },
-    { id: "recommendation", label: "Unit Recs", icon: "REC", group: "ops", visible: showDispatch },
-    { id: "unitReadiness", label: "Unit Board", icon: "UNIT", group: "ops", visible: showDispatch || showField, badge: moduleCounts.unitReadiness },
-    { id: "fieldOps", label: "Field Ops", icon: "OPS", group: "field", visible: showField || showDispatch },
-    { id: "assignedDeck", label: "Assigned Deck", icon: "CAR", group: "field", visible: showField, badge: moduleCounts.assignedDeck },
-    { id: "mobileControls", label: "Mobile Controls", icon: "MOB", group: "field", visible: showField },
-    { id: "messaging", label: "Messaging", icon: "MSG", group: "field", visible: showField || showDispatch, badge: moduleCounts.messaging },
-    { id: "disposition", label: "Disposition", icon: "FIN", group: "field", visible: showDispatch || showField || showReport },
-    { id: "reportHub", label: "Report Hub", icon: "RPT", group: "reporting", visible: showReport || showField || showDispatch, badge: moduleCounts.reportHub },
-    { id: "reviewQueue", label: "Review Queue", icon: "REV", group: "reporting", visible: showDispatch || showReport, badge: moduleCounts.reviewQueue },
-    { id: "reportingMetrics", label: "Report Metrics", icon: "MET", group: "reporting", visible: showDispatch || showReport, badge: moduleCounts.reportingMetrics },
-    { id: "intelHub", label: "Intel Hub", icon: "DB", group: "intel", visible: showIntel || showField || showDispatch },
-    { id: "policyHub", label: "Policy Hub", icon: "POL", iconStyle: "policyBook", group: "intel", visible: showIntel || showField || showDispatch, badge: moduleCounts.policyHub },
-    { id: "codeHub", label: "Code Hub", icon: "TXT", iconStyle: "codeBook", group: "intel", visible: showIntel || showField || showDispatch, badge: moduleCounts.codeHub },
-    { id: "commandDash", label: "Command", icon: "CMD", group: "command", visible: showDispatch || showReport },
-    { id: "opTrends", label: "Trends", icon: "TRD", group: "command", visible: showDispatch || showReport },
-    { id: "aiOps", label: "AI Ops", icon: "AI", group: "command", visible: showDispatch || showReport },
+    { id: "intake", label: "Intake", icon: "911", group: "ops", visible: canDispatchModules },
+    { id: "queue", label: "Active Queue", icon: "Q", group: "ops", visible: canDispatchModules, badge: moduleCounts.queue },
+    { id: "priorityRadar", label: "Priority Radar", icon: "RAD", group: "ops", visible: canDispatchModules, badge: moduleCounts.priorityRadar },
+    { id: "recommendation", label: "Unit Recs", icon: "REC", group: "ops", visible: canDispatchModules },
+    { id: "unitReadiness", label: "Unit Board", icon: "UNIT", group: "ops", visible: canDispatchModules, badge: moduleCounts.unitReadiness },
+    { id: "fieldOps", label: "Field Ops", icon: "OPS", group: "field", visible: canOfficerModules },
+    { id: "assignedDeck", label: "Assigned Deck", icon: "CAR", group: "field", visible: canOfficerModules, badge: moduleCounts.assignedDeck },
+    { id: "mobileControls", label: "Mobile Controls", icon: "MOB", group: "field", visible: canOfficerModules },
+    { id: "messaging", label: "Messaging", icon: "MSG", group: "field", visible: canOfficerModules || canDispatchModules, badge: moduleCounts.messaging },
+    { id: "disposition", label: "Disposition", icon: "FIN", group: "field", visible: canOfficerModules },
+    { id: "reportHub", label: "Report Hub", icon: "RPT", group: "reporting", visible: canReportModules, badge: moduleCounts.reportHub },
+    { id: "reviewQueue", label: "Review Queue", icon: "REV", group: "reporting", visible: canReportModules, badge: moduleCounts.reviewQueue },
+    { id: "reportingMetrics", label: "Report Metrics", icon: "MET", group: "reporting", visible: canReportModules, badge: moduleCounts.reportingMetrics },
+    { id: "intelHub", label: "Intel Hub", icon: "DB", group: "intel", visible: canIntelModules },
+    { id: "policyHub", label: "Policy Hub", icon: "POL", iconStyle: "policyBook", group: "intel", visible: canIntelModules, badge: moduleCounts.policyHub },
+    { id: "codeHub", label: "Code Hub", icon: "TXT", iconStyle: "codeBook", group: "intel", visible: canIntelModules, badge: moduleCounts.codeHub },
+    { id: "commandDash", label: "Command", icon: "CMD", group: "command", visible: canDispatchModules },
+    { id: "opTrends", label: "Trends", icon: "TRD", group: "command", visible: canDispatchModules },
+    { id: "aiOps", label: "AI Ops", icon: "AI", group: "command", visible: canDispatchModules },
     { id: "hotkeys", label: "Hotkeys", icon: "HK", group: "system", visible: true },
   ];
   const rightColumnModules: ModulePanel[] = [
@@ -2408,6 +2390,7 @@ export default function App() {
   const groupedVisibleModules = moduleGroups
     .map((group) => ({ ...group, items: visibleModuleButtons.filter((item) => item.group === group.id) }))
     .filter((group) => group.items.length > 0);
+  const activeModuleMeta = moduleButtons.find((item) => item.id === activeModule);
   const commandPaletteItems = [
     {
       id: "refresh",
@@ -2516,7 +2499,17 @@ export default function App() {
             ))}
           </div>
           <div className="login-actions">
-            <button className="dispatch-primary" type="button" onClick={() => setStarted(true)}>Enter Console</button>
+            <button
+              className="dispatch-primary"
+              type="button"
+              onClick={() => {
+                setViewMode(defaultViewForRole(sessionRole));
+                setActiveModule("mapOnly");
+                setStarted(true);
+              }}
+            >
+              Enter Console
+            </button>
           </div>
         </section>
       </div>
@@ -2528,40 +2521,52 @@ export default function App() {
       <header className="top-bar">
         <div>
           <h1>FirstLine Operations</h1>
-          <p>Unified console for intake, dispatch, officer actions, intelligence, and reporting.</p>
+          <p>{sessionRole} console locked to {roleDefaultView} workflow.</p>
         </div>
         <div className="top-role-row">
           <span className="role-badge">{sessionRole}</span>
-          <button className="dispatch-secondary" type="button" onClick={handleToggleLiveSimulation} disabled={loading}>
-            {liveSimulationRunning ? "Stop Live Simulation" : "Live Simulation"}
-          </button>
           <button className="dispatch-secondary" type="button" onClick={() => setCommandPaletteOpen(true)}>Cmd Palette</button>
           <button className="dispatch-secondary" type="button" onClick={refreshDashboard}>Refresh</button>
         </div>
       </header>
 
+      <section className="live-sim-strip">
+        <button
+          className={`live-sim-cta ${liveSimulationRunning ? "active" : ""}`}
+          type="button"
+          onClick={handleToggleLiveSimulation}
+          disabled={loading}
+        >
+          {liveSimulationRunning ? "Stop Live Simulation" : "Start Live Simulation"}
+        </button>
+        <div className="live-sim-meta">
+          <strong>{liveSimulationRunning ? "LIVE DEV RUNNING" : "Simulation Offline"}</strong>
+          <p>
+            Patrol units: {patrolStatus?.dispatchable_units ?? 0} · Active calls: {patrolStatus?.active_incidents ?? 0}/{patrolStatus?.max_active_calls ?? 10} · Tick {patrolStatus?.tick_index ?? 0}
+          </p>
+        </div>
+      </section>
+
       <div className="chip-row">
         {activeModule === "mapOnly" ? <span className="chip ok">Map-only workspace active</span> : null}
         <span className="chip">Traffic: {mapData?.traffic_overlay ?? "n/a"}</span>
-        <span className="chip">Hot zones: {mapData?.hot_zones.length ?? 0}</span>
-        <span className="chip">Geofence alerts: {mapData?.geofenced_alerts.filter((item) => item.active).length ?? 0}</span>
         <span className={`chip ${patrolStatus?.enabled ? "ok" : ""}`}>
-          Patrol Sim: {patrolStatus?.enabled ? `${patrolStatus.profile} · Tick ${patrolStatus.tick_index}` : "OFF"}
+          Patrol: {patrolStatus?.enabled ? `${patrolStatus.profile} · Tick ${patrolStatus.tick_index}` : "OFF"}
         </span>
-        <span className="chip">
-          Live Calls: {patrolStatus?.active_incidents ?? 0}/{patrolStatus?.max_active_calls ?? 10}
-        </span>
-        <span className="chip">Beats active: {patrolStatus?.beats_active.length ?? 0}</span>
-        <span className="chip">Units available: {availabilityBoard?.summary.available_count ?? 0}</span>
-        <span className="chip">Units unavailable: {availabilityBoard?.summary.unavailable_count ?? 0}</span>
-        <span className="chip">Report drafts: {reportHub?.drafts.length ?? 0}</span>
-        <span className={`chip ${reportReadiness?.ready_for_submission ? "ok" : "warn"}`}>
-          RMS ready: {reportReadiness?.ready_for_submission ? "YES" : "NO"}
-        </span>
-        <span className="chip">Supervisor review: {reviewQueue?.review_count ?? 0}</span>
-        <span className="chip">Break flags: {unitBoard?.break_recommendations.length ?? 0}</span>
-        <span className="chip">Priority radar: {priorityBoard?.incidents.filter((item) => item.risk_score >= 80).length ?? 0} high risk</span>
+        <span className="chip">Calls: {patrolStatus?.active_incidents ?? 0}/{patrolStatus?.max_active_calls ?? 10}</span>
+        <span className="chip">Units Avail: {availabilityBoard?.summary.available_count ?? 0}</span>
+        <span className="chip">Units Busy: {availabilityBoard?.summary.unavailable_count ?? 0}</span>
+        {canReportModules ? <span className="chip">Review Queue: {reviewQueue?.review_count ?? 0}</span> : null}
       </div>
+
+      {activeModule !== "mapOnly" ? (
+        <div className="active-module-row">
+          <span className="chip">Open Module: {activeModuleMeta?.label ?? activeModule}</span>
+          <button type="button" className="dispatch-secondary" onClick={() => setActiveModule("mapOnly")}>
+            X Close Module
+          </button>
+        </div>
+      ) : null}
 
       <section className="module-dock">
         <div className="module-dock-head">
@@ -3742,11 +3747,9 @@ export default function App() {
       ) : null}
 
       <nav className="bottom-nav">
-        {(["Dispatch", "Field", "Report", "Intel"] as ViewMode[]).map((mode) => (
-          <button key={mode} type="button" className={viewMode === mode ? "active" : ""} onClick={() => setViewMode(mode)}>
-            {mode}
-          </button>
-        ))}
+        <button type="button" className="active locked">
+          {sessionRole} View Locked: {roleDefaultView}
+        </button>
       </nav>
     </div>
   );
