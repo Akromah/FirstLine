@@ -3,7 +3,20 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Coordinates = { lat: number; lon: number };
 type IncidentSummary = { incident_id: string; call_type: string; priority: number; address: string; coordinates: Coordinates; status: string };
-type UnitSummary = { unit_id: string; callsign: string; officer_name?: string | null; status: string; coordinates: Coordinates; skills: string[]; workload_score: number; fatigue_score: number };
+type UnitSummary = {
+  unit_id: string;
+  callsign: string;
+  officer_name?: string | null;
+  role: string;
+  shift?: string | null;
+  beat?: number | null;
+  dispatchable: boolean;
+  status: string;
+  coordinates: Coordinates;
+  skills: string[];
+  workload_score: number;
+  fatigue_score: number;
+};
 type UnitReadiness = {
   unit_id: string;
   callsign: string;
@@ -22,6 +35,11 @@ type UnitAvailabilityBoard = {
     unit_id: string;
     callsign: string;
     officer_name: string;
+    role: string;
+    shift?: string | null;
+    beat?: number | null;
+    dispatchable: boolean;
+    dispatch_note: string;
     status_code: string;
     current_location: string;
     skills: string[];
@@ -32,6 +50,11 @@ type UnitAvailabilityBoard = {
     unit_id: string;
     callsign: string;
     officer_name: string;
+    role: string;
+    shift?: string | null;
+    beat?: number | null;
+    dispatchable: boolean;
+    dispatch_note: string;
     status_code: string;
     current_location: string;
     skills: string[];
@@ -43,6 +66,37 @@ type UnitAvailabilityBoard = {
     disposition_code?: string | null;
     disposition_summary?: string | null;
   }>;
+};
+type BeatOverlay = {
+  beat_id: number;
+  label: string;
+  shift_coverage: string[];
+  center: Coordinates;
+  coordinates: Coordinates[];
+};
+type PatrolSimulationStatus = {
+  enabled: boolean;
+  profile: string;
+  tick_seconds: number;
+  last_tick?: string | null;
+  last_call?: string | null;
+  calls_generated: number;
+  calls_auto_assigned: number;
+  tick_index: number;
+  dispatchable_units: number;
+  senior_units: number;
+  beats_active: number[];
+  active_incidents: number;
+};
+type MapOverview = {
+  timestamp: string;
+  traffic_overlay: string;
+  hot_zones: Array<{ name: string; risk: string; score: number }>;
+  geofenced_alerts: Array<{ zone: string; type: string; active: boolean }>;
+  beats: BeatOverlay[];
+  patrol_simulation: PatrolSimulationStatus;
+  units: UnitSummary[];
+  active_incidents: IncidentSummary[];
 };
 type PriorityRadar = {
   count: number;
@@ -325,7 +379,8 @@ export default function App() {
   const [unitBoard, setUnitBoard] = useState<UnitBoard | null>(null);
   const [availabilityBoard, setAvailabilityBoard] = useState<UnitAvailabilityBoard | null>(null);
   const [priorityBoard, setPriorityBoard] = useState<PriorityRadar | null>(null);
-  const [mapData, setMapData] = useState<any>(null);
+  const [mapData, setMapData] = useState<MapOverview | null>(null);
+  const [patrolStatus, setPatrolStatus] = useState<PatrolSimulationStatus | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const [mapStyleMode, setMapStyleMode] = useState<"primary" | "fallback">("primary");
   const [mapStatusMessage, setMapStatusMessage] = useState("Map not initialized.");
@@ -359,6 +414,7 @@ export default function App() {
   const [riskProfile, setRiskProfile] = useState<any>(null);
   const [showMapUnits, setShowMapUnits] = useState(true);
   const [showMapIncidents, setShowMapIncidents] = useState(true);
+  const [showMapBeats, setShowMapBeats] = useState(true);
   const [mapFocusMode, setMapFocusMode] = useState(false);
 
   const [statusUnitId, setStatusUnitId] = useState("u-201");
@@ -374,6 +430,8 @@ export default function App() {
   const [mockUnitsCount, setMockUnitsCount] = useState(14);
   const [mockIncidentsCount, setMockIncidentsCount] = useState(18);
   const [mockClearExisting, setMockClearExisting] = useState(false);
+  const [patrolTickSeconds, setPatrolTickSeconds] = useState(12);
+  const [patrolInitialCalls, setPatrolInitialCalls] = useState(4);
 
   const [dispositionCode, setDispositionCode] = useState("WARNING_ISSUED");
   const [dispositionSummary, setDispositionSummary] = useState("Scene stabilized and verbal warning issued.");
@@ -445,6 +503,7 @@ export default function App() {
       if (typeof prefs.activeModule === "string") setActiveModule(prefs.activeModule as ModulePanel);
       if (typeof prefs.showMapUnits === "boolean") setShowMapUnits(prefs.showMapUnits);
       if (typeof prefs.showMapIncidents === "boolean") setShowMapIncidents(prefs.showMapIncidents);
+      if (typeof prefs.showMapBeats === "boolean") setShowMapBeats(prefs.showMapBeats);
       if (typeof prefs.autoSaveEnabled === "boolean") setAutoSaveEnabled(prefs.autoSaveEnabled);
     } catch {
       // Ignore malformed local preference payloads.
@@ -462,13 +521,14 @@ export default function App() {
           activeModule,
           showMapUnits,
           showMapIncidents,
+          showMapBeats,
           autoSaveEnabled,
         })
       );
     } catch {
       // Ignore storage write failures.
     }
-  }, [sessionRole, viewMode, statusUnitId, activeModule, showMapUnits, showMapIncidents, autoSaveEnabled]);
+  }, [sessionRole, viewMode, statusUnitId, activeModule, showMapUnits, showMapIncidents, showMapBeats, autoSaveEnabled]);
 
   useEffect(() => {
     selectedIncidentIdRef.current = selectedIncidentId;
@@ -566,7 +626,7 @@ export default function App() {
         fetchJson<PriorityRadar>("/api/v1/dispatch/priority-board?limit=6"),
         fetchJson<any>("/api/v1/command/overview"),
         fetchJson<CommandTrends>("/api/v1/command/trends?periods=6"),
-        fetchJson<any>("/api/v1/map/overview"),
+        fetchJson<MapOverview>("/api/v1/map/overview"),
         fetchJson<ReportingHub>("/api/v1/reporting/hub"),
         fetchJson<ReportingMetrics>("/api/v1/reporting/metrics"),
         fetchJson<ReviewQueue>("/api/v1/reporting/review-queue"),
@@ -582,6 +642,7 @@ export default function App() {
       setCommand(c);
       setCommandTrends(ct);
       setMapData(m);
+      setPatrolStatus(m.patrol_simulation ?? null);
       setReportHub(h);
       setReportingMetrics(rm);
       setReviewQueue(rq);
@@ -673,13 +734,75 @@ export default function App() {
 
   useEffect(() => {
     if (!mapReady || !mapRef.current || !mapData || !mapLibRef.current) return;
+    const map = mapRef.current;
+    const beatSourceId = "firstline-beats";
+    const beatFillLayerId = "firstline-beat-fill";
+    const beatLineLayerId = "firstline-beat-line";
+
+    const removeBeatLayers = () => {
+      if (map.getLayer(beatLineLayerId)) map.removeLayer(beatLineLayerId);
+      if (map.getLayer(beatFillLayerId)) map.removeLayer(beatFillLayerId);
+      if (map.getSource(beatSourceId)) map.removeSource(beatSourceId);
+    };
+
+    if (showMapBeats && (mapData.beats ?? []).length > 0) {
+      const beatGeoJson = {
+        type: "FeatureCollection",
+        features: mapData.beats.map((beat) => {
+          const ring = beat.coordinates.map((point) => [point.lon, point.lat]);
+          if (ring.length > 0) {
+            const [firstLon, firstLat] = ring[0];
+            const [lastLon, lastLat] = ring[ring.length - 1];
+            if (firstLon !== lastLon || firstLat !== lastLat) ring.push([firstLon, firstLat]);
+          }
+          return {
+            type: "Feature",
+            properties: { beat_id: beat.beat_id, label: beat.label },
+            geometry: { type: "Polygon", coordinates: [ring] },
+          };
+        }),
+      };
+
+      const existingSource = map.getSource(beatSourceId) as any;
+      if (existingSource?.setData) {
+        existingSource.setData(beatGeoJson as any);
+      } else {
+        removeBeatLayers();
+        map.addSource(beatSourceId, {
+          type: "geojson",
+          data: beatGeoJson as any,
+        });
+        map.addLayer({
+          id: beatFillLayerId,
+          type: "fill",
+          source: beatSourceId,
+          paint: {
+            "fill-color": "#4f8dff",
+            "fill-opacity": 0.14,
+          },
+        });
+        map.addLayer({
+          id: beatLineLayerId,
+          type: "line",
+          source: beatSourceId,
+          paint: {
+            "line-color": "#8fb4ff",
+            "line-width": 2,
+            "line-opacity": 0.7,
+          },
+        });
+      }
+    } else {
+      removeBeatLayers();
+    }
+
     markerRefs.current.forEach((m) => m.remove());
     markerRefs.current = [];
 
     if (showMapUnits) {
       mapData.units.forEach((unit: UnitSummary) => {
         const el = document.createElement("div");
-        el.className = `map-unit-marker status-${unit.status.toLowerCase().replace("_", "-")}`;
+        el.className = `map-unit-marker status-${unit.status.toLowerCase().replaceAll("_", "-")}`;
         el.innerText = `${unit.callsign}\n${unit.status}`;
         markerRefs.current.push(new mapLibRef.current.Marker({ element: el }).setLngLat([unit.coordinates.lon, unit.coordinates.lat]).addTo(mapRef.current!));
       });
@@ -697,7 +820,7 @@ export default function App() {
     if (selectedIncident) {
       mapRef.current.flyTo({ center: [selectedIncident.coordinates.lon, selectedIncident.coordinates.lat], zoom: 13, speed: 0.6 });
     }
-  }, [mapData, selectedIncident, mapReady, showMapUnits, showMapIncidents]);
+  }, [mapData, selectedIncident, mapReady, showMapUnits, showMapIncidents, showMapBeats]);
 
   useEffect(() => {
     async function loadRisk() {
@@ -1073,6 +1196,48 @@ export default function App() {
       await refreshDashboard();
     } catch (error) {
       setBanner(`Mock seed failed: ${(error as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleStartPatrolSimulation() {
+    setLoading(true);
+    try {
+      const result = await fetchJson<{
+        dispatchable_units: number;
+        senior_units: number;
+        beats_active: number[];
+        initial_calls: number;
+        initial_assigned: number;
+      }>("/api/v1/intake/patrol-sim/start", {
+        method: "POST",
+        body: JSON.stringify({
+          clear_existing: true,
+          tick_seconds: patrolTickSeconds,
+          initial_calls: patrolInitialCalls,
+        }),
+      });
+      setBanner(
+        `Patrol simulation live: ${result.dispatchable_units} dispatchable officers across beats ${result.beats_active.join(", ")}.`
+      );
+      setActiveModule("unitReadiness");
+      await refreshDashboard();
+    } catch (error) {
+      setBanner(`Patrol simulation failed: ${(error as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleStopPatrolSimulation() {
+    setLoading(true);
+    try {
+      await fetchJson<{ stopped: boolean }>("/api/v1/intake/patrol-sim/stop", { method: "POST" });
+      setBanner("Patrol simulation stopped.");
+      await refreshDashboard();
+    } catch (error) {
+      setBanner(`Stop patrol simulation failed: ${(error as Error).message}`);
     } finally {
       setLoading(false);
     }
@@ -1810,7 +1975,11 @@ export default function App() {
         {activeModule === "mapOnly" ? <span className="chip ok">Map-only workspace active</span> : null}
         <span className="chip">Traffic: {mapData?.traffic_overlay ?? "n/a"}</span>
         <span className="chip">Hot zones: {mapData?.hot_zones.length ?? 0}</span>
-        <span className="chip">Geofence alerts: {mapData?.geofenced_alerts.filter((item: any) => item.active).length ?? 0}</span>
+        <span className="chip">Geofence alerts: {mapData?.geofenced_alerts.filter((item) => item.active).length ?? 0}</span>
+        <span className={`chip ${patrolStatus?.enabled ? "ok" : ""}`}>
+          Patrol Sim: {patrolStatus?.enabled ? `LIVE · Tick ${patrolStatus.tick_index}` : "OFF"}
+        </span>
+        <span className="chip">Beats active: {patrolStatus?.beats_active.length ?? 0}</span>
         <span className="chip">Units available: {availabilityBoard?.summary.available_count ?? 0}</span>
         <span className="chip">Units unavailable: {availabilityBoard?.summary.unavailable_count ?? 0}</span>
         <span className="chip">Report drafts: {reportHub?.drafts.length ?? 0}</span>
@@ -1912,6 +2081,43 @@ export default function App() {
                 Generate Mock Units + Calls
               </button>
             </div>
+            <div className="template-row">
+              <label className="form-field">
+                Patrol Tick Seconds
+                <input
+                  type="number"
+                  min={5}
+                  max={60}
+                  value={patrolTickSeconds}
+                  onChange={(e) => setPatrolTickSeconds(Math.max(5, Math.min(60, Number(e.target.value) || 12)))}
+                />
+              </label>
+              <label className="form-field">
+                Initial Calls
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={patrolInitialCalls}
+                  onChange={(e) => setPatrolInitialCalls(Math.max(1, Math.min(20, Number(e.target.value) || 4)))}
+                />
+              </label>
+            </div>
+            <div className="button-grid">
+              <button type="button" onClick={handleStartPatrolSimulation} disabled={loading}>
+                Start 10-Officer Beat Simulation
+              </button>
+              <button type="button" onClick={handleStopPatrolSimulation} disabled={loading || !patrolStatus?.enabled}>
+                Stop Simulation
+              </button>
+            </div>
+            {patrolStatus ? (
+              <div className="dispatch-banner">
+                {patrolStatus.enabled ? "Live" : "Paused"} · Dispatchable {patrolStatus.dispatchable_units} · Supervisors{" "}
+                {patrolStatus.senior_units} · Calls generated {patrolStatus.calls_generated} · Auto-assigned{" "}
+                {patrolStatus.calls_auto_assigned}
+              </div>
+            ) : null}
             <div className="dispatch-banner">{banner}</div>
           </article>
           ) : null}
@@ -1921,6 +2127,7 @@ export default function App() {
             <div className="toggle-row">
               <label><input type="checkbox" checked={showMapUnits} onChange={(e) => setShowMapUnits(e.target.checked)} /> Units</label>
               <label><input type="checkbox" checked={showMapIncidents} onChange={(e) => setShowMapIncidents(e.target.checked)} /> Incidents</label>
+              <label><input type="checkbox" checked={showMapBeats} onChange={(e) => setShowMapBeats(e.target.checked)} /> Beat Overlays</label>
               <span className={`chip ${mapStyleMode === "fallback" ? "warn" : "ok"}`}>{mapStatusMessage}</span>
               <button type="button" className="dispatch-secondary" onClick={() => setMapFocusMode((prev) => !prev)}>
                 {mapFocusMode ? "Exit Map Focus" : "Map Focus"}
@@ -2314,11 +2521,12 @@ export default function App() {
             <div className="hub-grid">
               <div className="hub-col">
                 <h3>Available Units</h3>
-                {(availabilityBoard?.available_units ?? []).slice(0, 10).map((unit) => (
+                {(availabilityBoard?.available_units ?? []).map((unit) => (
                   <div key={unit.unit_id} className="hub-row">
-                    <strong>{unit.callsign} · {unit.officer_name}</strong>
-                    <p>{unit.unit_id} · {unit.status_code}</p>
+                    <strong>{unit.callsign} · {unit.officer_name} · {unit.role}</strong>
+                    <p>{unit.unit_id} · {unit.status_code} · Shift {unit.shift ?? "n/a"} · Beat {unit.beat ?? "n/a"}</p>
                     <p>Location: {unit.current_location}</p>
+                    <p>Dispatch: {unit.dispatch_note}</p>
                     <p>Skills: {unit.skills.join(", ") || "n/a"}</p>
                   </div>
                 ))}
@@ -2326,15 +2534,16 @@ export default function App() {
               </div>
               <div className="hub-col">
                 <h3>Unavailable Unit Dispositions</h3>
-                {(availabilityBoard?.unavailable_units ?? []).slice(0, 10).map((unit) => (
+                {(availabilityBoard?.unavailable_units ?? []).map((unit) => (
                   <div key={unit.unit_id} className="hub-row">
-                    <strong>{unit.callsign} · {unit.officer_name}</strong>
+                    <strong>{unit.callsign} · {unit.officer_name} · {unit.role}</strong>
                     <p>Status code: {unit.status_code} · Incident status: {unit.incident_status}</p>
-                    <p>{unit.call_type} · {unit.current_location}</p>
+                    <p>{unit.call_type} · {unit.current_location} · Shift {unit.shift ?? "n/a"} · Beat {unit.beat ?? "n/a"}</p>
                     <p>
                       {unit.incident_id ? `Incident ${unit.incident_id}` : "No active incident"} · Last action {unit.last_action}
                       {unit.predicted_eta_minutes ? ` · ETA ${unit.predicted_eta_minutes}m` : ""}
                     </p>
+                    <p>Dispatch: {unit.dispatch_note}</p>
                     <p>
                       Disposition: {unit.disposition_code ?? "Pending"}
                       {unit.disposition_summary ? ` · ${unit.disposition_summary}` : ""}

@@ -375,3 +375,65 @@ def test_intake_dispatch_reporting_flow() -> None:
     mock_seed_payload = mock_seed_response.json()
     assert mock_seed_payload["units_created"] >= 8
     assert mock_seed_payload["incidents_created"] >= 10
+
+    patrol_start_response = client.post(
+        "/api/v1/intake/patrol-sim/start",
+        json={
+            "clear_existing": True,
+            "tick_seconds": 5,
+            "initial_calls": 4,
+        },
+    )
+    assert patrol_start_response.status_code == 200
+    patrol_start_payload = patrol_start_response.json()
+    assert patrol_start_payload["started"] is True
+    assert patrol_start_payload["dispatchable_units"] == 10
+    assert patrol_start_payload["senior_units"] == 2
+    assert patrol_start_payload["beats_active"] == [1, 2, 3, 4, 5]
+
+    patrol_status_response = client.get("/api/v1/intake/patrol-sim/status")
+    assert patrol_status_response.status_code == 200
+    patrol_status_payload = patrol_status_response.json()
+    assert patrol_status_payload["enabled"] is True
+    assert patrol_status_payload["dispatchable_units"] == 10
+    assert patrol_status_payload["senior_units"] == 2
+
+    patrol_map_response = client.get("/api/v1/map/overview")
+    assert patrol_map_response.status_code == 200
+    patrol_map_payload = patrol_map_response.json()
+    assert len(patrol_map_payload["beats"]) == 5
+    assert patrol_map_payload["patrol_simulation"]["enabled"] is True
+
+    patrol_board_response = client.get("/api/v1/dispatch/availability-board")
+    assert patrol_board_response.status_code == 200
+    patrol_board_payload = patrol_board_response.json()
+    all_board_units = patrol_board_payload["available_units"] + patrol_board_payload["unavailable_units"]
+    assert any(unit["dispatchable"] is False for unit in all_board_units)
+
+    patrol_intake_response = client.post(
+        "/api/v1/intake/calls",
+        json={
+            "caller_name": "Beat test caller",
+            "phone": "555-8900",
+            "call_text": "Domestic disturbance in progress near beat boundary.",
+            "address": "210 University St, Redlands",
+            "lat": 34.0605,
+            "lon": -117.1691,
+        },
+    )
+    assert patrol_intake_response.status_code == 200
+    patrol_incident_id = patrol_intake_response.json()["call_id"]
+
+    patrol_assign_response = client.post(
+        "/api/v1/dispatch/assign",
+        json={
+            "incident_id": patrol_incident_id,
+            "required_skills": ["Crisis"],
+            "incident_lat": 34.0605,
+            "incident_lon": -117.1691,
+        },
+    )
+    assert patrol_assign_response.status_code == 200
+    patrol_assignment_payload = patrol_assign_response.json()
+    assert patrol_assignment_payload["recommended_unit_id"] not in {"u-sgt-10", "u-lt-20"}
+    assert patrol_assignment_payload["recommended_unit_id"] != "UNAVAILABLE"

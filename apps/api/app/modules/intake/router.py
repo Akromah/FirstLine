@@ -5,10 +5,15 @@ from app.modules.intake.service import (
     IntakeRequest,
     IntakeResponse,
     MockSeedRequest,
+    PatrolSimulationRequest,
+    advance_patrol_simulation,
     generate_mock_data,
     get_incident_risk_profile,
     launch_demo_scenario,
+    patrol_simulation_status,
     process_intake,
+    start_patrol_simulation,
+    stop_patrol_simulation,
 )
 
 router = APIRouter()
@@ -35,3 +40,20 @@ def run_demo_scenario(payload: DemoScenarioRequest) -> dict:
 @router.post("/mock-seed")
 def seed_mock_dataset(payload: MockSeedRequest) -> dict:
     return generate_mock_data(payload)
+
+
+@router.post("/patrol-sim/start")
+def start_patrol_sim(payload: PatrolSimulationRequest) -> dict:
+    result = start_patrol_simulation(payload)
+    tick = advance_patrol_simulation()
+    return {**result, "first_tick": tick}
+
+
+@router.post("/patrol-sim/stop")
+def stop_patrol_sim() -> dict:
+    return stop_patrol_simulation()
+
+
+@router.get("/patrol-sim/status")
+def get_patrol_sim_status() -> dict:
+    return patrol_simulation_status()

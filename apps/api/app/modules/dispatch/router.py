@@ -13,6 +13,7 @@ from app.modules.dispatch.service import (
     choose_unit,
     finalize_disposition,
 )
+from app.modules.intake.service import advance_patrol_simulation
 from app.modules.mapping.service import get_live_units
 
 router = APIRouter()
@@ -25,6 +26,7 @@ def list_units() -> dict:
 
 @router.get("/queue")
 def list_dispatch_queue() -> dict:
+    advance_patrol_simulation()
     incidents = state.list_incident_summaries()
     return {"incidents": [incident.model_dump() for incident in incidents]}
 

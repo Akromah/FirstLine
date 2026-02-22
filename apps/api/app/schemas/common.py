@@ -10,6 +10,10 @@ class UnitSummary(BaseModel):
     unit_id: str
     callsign: str
     officer_name: str | None = None
+    role: str = "OFFICER"
+    shift: str | None = None
+    beat: int | None = None
+    dispatchable: bool = True
     status: str
     coordinates: Coordinates
     skills: list[str] = Field(default_factory=list)

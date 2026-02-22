@@ -56,6 +56,8 @@ def rank_units(payload: AssignmentRequest) -> list[tuple[float, UnitSummary, int
     units = get_live_units()
     ranked = []
     for unit in units:
+        if not unit.dispatchable:
+            continue
         requested_skills = {s.lower() for s in payload.required_skills}
         unit_skills = {s.lower() for s in unit.skills}
         skill_match = len(requested_skills & unit_skills)
@@ -80,6 +82,15 @@ def rank_units(payload: AssignmentRequest) -> list[tuple[float, UnitSummary, int
 
 def choose_unit(payload: AssignmentRequest, commit: bool = True) -> AssignmentResponse:
     ranked = rank_units(payload)
+    if not ranked:
+        return AssignmentResponse(
+            incident_id=payload.incident_id,
+            recommended_unit_id="UNAVAILABLE",
+            callsign="NONE",
+            predicted_eta_minutes=0,
+            confidence=0.0,
+            reasons=["No dispatchable units currently available for assignment."],
+        )
     best_score, best_unit, match_count, distance_km = ranked[0]
     incident = state.get_incident(payload.incident_id)
     incident_priority = int(incident["priority"]) if incident and incident.get("priority") is not None else 0
@@ -268,6 +279,11 @@ def build_unit_status_board() -> dict:
             "unit_id": unit.unit_id,
             "callsign": unit.callsign,
             "officer_name": unit.officer_name or "Unassigned",
+            "role": unit.role,
+            "shift": unit.shift,
+            "beat": unit.beat,
+            "dispatchable": unit.dispatchable,
+            "dispatch_note": "Dispatchable patrol unit" if unit.dispatchable else "Non-dispatchable supervisor",
             "status_code": unit.status,
             "skills": unit.skills,
             "workload_score": unit.workload_score,
@@ -290,6 +306,7 @@ def build_unit_status_board() -> dict:
                     "last_action": _latest_unit_event(active_incident),
                     "disposition_code": (active_incident.get("disposition") or {}).get("disposition_code"),
                     "disposition_summary": (active_incident.get("disposition") or {}).get("summary"),
+                    "dispatch_note": "Assigned to active call" if unit.dispatchable else "Non-dispatchable supervisor",
                 }
             )
         else:
@@ -303,6 +320,7 @@ def build_unit_status_board() -> dict:
                     "last_action": "STATUS_ONLY",
                     "disposition_code": None,
                     "disposition_summary": None,
+                    "dispatch_note": "Non-dispatchable supervisor" if not unit.dispatchable else "Unavailable (no active CAD incident)",
                 }
             )
 

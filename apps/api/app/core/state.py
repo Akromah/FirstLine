@@ -20,12 +20,17 @@ class InMemoryState:
         self._incident_sequence = 1001
         self._message_sequence = 78000
         self._report_sequence = 5200
+        self._sim_tick = 0
 
         self._units: dict[str, UnitSummary] = {
             "u-201": UnitSummary(
                 unit_id="u-201",
                 callsign="2A21",
                 officer_name="Sgt. Elena Ruiz",
+                role="SERGEANT",
+                shift="DAY",
+                beat=2,
+                dispatchable=False,
                 status="AVAILABLE",
                 coordinates={"lat": 34.0567, "lon": -117.1956},
                 skills=["Spanish", "Crisis"],
@@ -36,6 +41,10 @@ class InMemoryState:
                 unit_id="u-507",
                 callsign="5L07",
                 officer_name="Ofc. Marcus Lane",
+                role="OFFICER",
+                shift="DAY",
+                beat=5,
+                dispatchable=True,
                 status="EN_ROUTE",
                 coordinates={"lat": 34.0489, "lon": -117.1848},
                 skills=["K9"],
@@ -46,6 +55,10 @@ class InMemoryState:
                 unit_id="u-310",
                 callsign="3S10",
                 officer_name="Ofc. Daniel Kim",
+                role="OFFICER",
+                shift="SWING",
+                beat=3,
+                dispatchable=True,
                 status="AVAILABLE",
                 coordinates={"lat": 34.0624, "lon": -117.1702},
                 skills=["SWAT", "Spanish"],
@@ -56,6 +69,10 @@ class InMemoryState:
                 unit_id="u-404",
                 callsign="4R04",
                 officer_name="Ofc. Priya Shah",
+                role="OFFICER",
+                shift="SWING",
+                beat=4,
+                dispatchable=True,
                 status="AVAILABLE",
                 coordinates={"lat": 34.0518, "lon": -117.1629},
                 skills=["Medical", "Crisis"],
@@ -72,6 +89,16 @@ class InMemoryState:
         self._person_records: list[dict] = []
         self._firearms_registry: list[dict] = []
         self._warrant_registry: list[dict] = []
+        self._beat_overlays: list[dict] = []
+        self._patrol_simulation: dict = {
+            "enabled": False,
+            "profile": "OFF",
+            "tick_seconds": 12,
+            "last_tick": None,
+            "last_call": None,
+            "calls_generated": 0,
+            "calls_auto_assigned": 0,
+        }
         self._seed_initial_incident()
         self._seed_reference_data()
 
@@ -193,6 +220,15 @@ class InMemoryState:
             unit.status = status
             return True
 
+    def update_unit_coordinates(self, unit_id: str, lat: float, lon: float) -> bool:
+        with self._lock:
+            unit = self._units.get(unit_id)
+            if not unit:
+                return False
+            unit.coordinates.lat = lat
+            unit.coordinates.lon = lon
+            return True
+
     def upsert_unit(self, unit: UnitSummary) -> UnitSummary:
         with self._lock:
             self._units[unit.unit_id] = unit.model_copy(deep=True)
@@ -205,8 +241,69 @@ class InMemoryState:
             self._handoff_notes = {}
             self._report_drafts = {}
             self._command_history = []
+            self._sim_tick = 0
             if clear_units:
                 self._units = {}
+            self._beat_overlays = []
+            self._patrol_simulation = {
+                "enabled": False,
+                "profile": "OFF",
+                "tick_seconds": 12,
+                "last_tick": None,
+                "last_call": None,
+                "calls_generated": 0,
+                "calls_auto_assigned": 0,
+            }
+
+    def set_beat_overlays(self, overlays: list[dict]) -> None:
+        with self._lock:
+            self._beat_overlays = [item.copy() for item in overlays]
+
+    def get_beat_overlays(self) -> list[dict]:
+        with self._lock:
+            return [item.copy() for item in self._beat_overlays]
+
+    def set_patrol_simulation(self, enabled: bool, profile: str = "OFF", tick_seconds: int = 12) -> None:
+        with self._lock:
+            self._patrol_simulation["enabled"] = enabled
+            self._patrol_simulation["profile"] = profile
+            self._patrol_simulation["tick_seconds"] = max(5, tick_seconds)
+            if enabled:
+                self._sim_tick = 0
+                self._patrol_simulation["last_tick"] = None
+                self._patrol_simulation["last_call"] = None
+                self._patrol_simulation["calls_generated"] = 0
+                self._patrol_simulation["calls_auto_assigned"] = 0
+            else:
+                self._patrol_simulation["last_tick"] = utc_now_iso()
+                self._patrol_simulation["last_call"] = None
+
+    def mark_patrol_tick(self) -> None:
+        with self._lock:
+            self._sim_tick += 1
+            self._patrol_simulation["last_tick"] = utc_now_iso()
+
+    def mark_patrol_call_generated(self, assigned: bool = False) -> None:
+        with self._lock:
+            self._patrol_simulation["calls_generated"] += 1
+            if assigned:
+                self._patrol_simulation["calls_auto_assigned"] += 1
+            self._patrol_simulation["last_call"] = utc_now_iso()
+
+    def patrol_simulation_status(self) -> dict:
+        with self._lock:
+            dispatchable_units = [u for u in self._units.values() if u.dispatchable]
+            senior_units = [u for u in self._units.values() if not u.dispatchable]
+            beats = sorted({u.beat for u in dispatchable_units if u.beat is not None})
+            active_incidents = [i for i in self._incidents.values() if i["status"] != "CLOSED"]
+            return {
+                **self._patrol_simulation.copy(),
+                "tick_index": self._sim_tick,
+                "dispatchable_units": len(dispatchable_units),
+                "senior_units": len(senior_units),
+                "beats_active": beats,
+                "active_incidents": len(active_incidents),
+            }
 
     def find_duplicate_incidents(self, normalized_address: str) -> list[str]:
         with self._lock:
