@@ -212,6 +212,8 @@ export default function App() {
   const [reportNarrative, setReportNarrative] = useState("Initial narrative pending.");
   const [reportFields, setReportFields] = useState("case_type=Domestic;supervisor_review=Pending");
   const [reportSummary, setReportSummary] = useState("");
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
+  const [lastAutoSavedAt, setLastAutoSavedAt] = useState("");
   const [templateCatalog, setTemplateCatalog] = useState<ReportTemplateCatalog | null>(null);
   const [selectedTemplateId, setSelectedTemplateId] = useState("GENERAL_INCIDENT");
   const [reportTone, setReportTone] = useState("professional");
@@ -475,6 +477,40 @@ export default function App() {
     }
     loadTemplates();
   }, [selectedIncident?.incident_id]);
+
+  useEffect(() => {
+    if (!autoSaveEnabled || !selectedIncident || !statusUnitId) return;
+    const timer = window.setTimeout(async () => {
+      try {
+        await fetchJson("/api/v1/reporting/draft", {
+          method: "POST",
+          body: JSON.stringify({
+            incident_id: selectedIncident.incident_id,
+            unit_id: statusUnitId,
+            narrative: reportNarrative,
+            structured_fields: parseFields(reportFields),
+            template_id: selectedTemplateId,
+            dictation_metadata: { segments: dictationSegments, seconds: dictationSeconds },
+            status: "DRAFT",
+          }),
+        });
+        setLastAutoSavedAt(new Date().toLocaleTimeString());
+      } catch {
+        // Best-effort autosave should not interrupt operator workflow.
+      }
+    }, 18000);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    autoSaveEnabled,
+    selectedIncident?.incident_id,
+    statusUnitId,
+    reportNarrative,
+    reportFields,
+    selectedTemplateId,
+    dictationSegments,
+    dictationSeconds,
+  ]);
 
   useEffect(() => {
     const speechCtor = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
@@ -856,6 +892,11 @@ export default function App() {
     }
   }
 
+  function appendNarrativeBlock(label: string) {
+    const block = `\n${label}: `;
+    setReportNarrative((prev) => `${prev.trimEnd()}${block}`);
+  }
+
   async function handleSendMessage() {
     if (!statusUnitId || !messageTarget || !messageBody.trim()) return;
     setLoading(true);
@@ -1160,6 +1201,16 @@ export default function App() {
                 AI Refine Narrative
               </button>
             </div>
+            <div className="button-grid">
+              <button type="button" onClick={() => appendNarrativeBlock("Witness Statements")} disabled={loading}>Insert Witness Section</button>
+              <button type="button" onClick={() => appendNarrativeBlock("Evidence Collected")} disabled={loading}>Insert Evidence Section</button>
+              <button type="button" onClick={() => appendNarrativeBlock("Use of Force Analysis")} disabled={loading}>Insert Force Section</button>
+              <button type="button" onClick={() => appendNarrativeBlock("Medical Follow-Up")} disabled={loading}>Insert Medical Section</button>
+            </div>
+            <div className="toggle-row">
+              <label><input type="checkbox" checked={autoSaveEnabled} onChange={(e) => setAutoSaveEnabled(e.target.checked)} /> Auto-save draft</label>
+            </div>
+            <div className="dispatch-banner">Auto-save: {autoSaveEnabled ? "On" : "Off"} {lastAutoSavedAt ? `· Last ${lastAutoSavedAt}` : ""}</div>
             <div className="dictation-controls">
               <div className="dictation-row">
                 <button type="button" onClick={handleStartDictation} disabled={loading || !dictationSupported || isDictating}>
