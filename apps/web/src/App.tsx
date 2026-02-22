@@ -1212,24 +1212,34 @@ export default function App() {
   const showField = viewMode === "Field";
   const showReport = viewMode === "Report";
   const showIntel = viewMode === "Intel";
-  const moduleButtons: Array<{ id: ModulePanel; label: string; visible: boolean }> = [
+  const moduleCounts: Partial<Record<ModulePanel, number>> = {
+    queue: filteredQueue.length,
+    priorityRadar: priorityBoard?.incidents.filter((item) => item.risk_score >= 80).length,
+    assignedDeck: officerFeed?.assigned_incidents.length,
+    reportHub: reportHub?.drafts.length,
+    reviewQueue: reviewQueue?.review_count,
+    reportingMetrics: reportingMetrics?.changes_requested,
+    messaging: messageInbox?.unread_estimate,
+    unitReadiness: unitBoard?.break_recommendations.length,
+  };
+  const moduleButtons: Array<{ id: ModulePanel; label: string; visible: boolean; badge?: number }> = [
     { id: "intake", label: "Intake", visible: showDispatch },
-    { id: "queue", label: "Active Queue", visible: showDispatch || showField || showReport },
-    { id: "priorityRadar", label: "Priority Radar", visible: showDispatch || showField },
+    { id: "queue", label: "Active Queue", visible: showDispatch || showField || showReport, badge: moduleCounts.queue },
+    { id: "priorityRadar", label: "Priority Radar", visible: showDispatch || showField, badge: moduleCounts.priorityRadar },
     { id: "fieldOps", label: "Field Ops", visible: showField || showDispatch },
-    { id: "assignedDeck", label: "Assigned Deck", visible: showField },
-    { id: "reportHub", label: "Report Hub", visible: showReport || showField || showDispatch },
+    { id: "assignedDeck", label: "Assigned Deck", visible: showField, badge: moduleCounts.assignedDeck },
+    { id: "reportHub", label: "Report Hub", visible: showReport || showField || showDispatch, badge: moduleCounts.reportHub },
     { id: "intelHub", label: "Intel Hub", visible: showIntel || showField || showDispatch },
     { id: "commandDash", label: "Command", visible: showDispatch || showReport },
-    { id: "unitReadiness", label: "Readiness", visible: showDispatch || showField },
+    { id: "unitReadiness", label: "Readiness", visible: showDispatch || showField, badge: moduleCounts.unitReadiness },
     { id: "opTrends", label: "Trends", visible: showDispatch || showReport },
-    { id: "reviewQueue", label: "Review Queue", visible: showDispatch || showReport },
-    { id: "reportingMetrics", label: "Report Metrics", visible: showDispatch || showReport },
+    { id: "reviewQueue", label: "Review Queue", visible: showDispatch || showReport, badge: moduleCounts.reviewQueue },
+    { id: "reportingMetrics", label: "Report Metrics", visible: showDispatch || showReport, badge: moduleCounts.reportingMetrics },
     { id: "aiOps", label: "AI Ops", visible: showDispatch || showReport },
     { id: "recommendation", label: "Recommend", visible: showDispatch },
     { id: "disposition", label: "Disposition", visible: showDispatch || showField || showReport },
     { id: "mobileControls", label: "Mobile Controls", visible: showField },
-    { id: "messaging", label: "Messaging", visible: showField || showDispatch },
+    { id: "messaging", label: "Messaging", visible: showField || showDispatch, badge: moduleCounts.messaging },
     { id: "hotkeys", label: "Hotkeys", visible: true },
   ];
   const rightColumnModules: ModulePanel[] = [
@@ -1306,6 +1316,7 @@ export default function App() {
             onClick={() => setActiveModule(item.id)}
           >
             {item.label}
+            {typeof item.badge === "number" ? <span className="module-count">{item.badge}</span> : null}
           </button>
         ))}
       </section>

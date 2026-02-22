@@ -118,12 +118,27 @@ body {
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
 }
 
 .module-btn.active {
   border-color: #1f5db1;
   background: #e7f1ff;
   color: #1f5db1;
+}
+
+.module-count {
+  border: 1px solid #345c95;
+  border-radius: 999px;
+  background: rgba(79, 141, 255, 0.24);
+  color: #e8f2ff;
+  min-width: 20px;
+  padding: 1px 6px;
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: center;
 }
 
 .layout {
