@@ -4,6 +4,7 @@ from app.modules.reporting.service import (
     ReportCreateRequest,
     ReportDraftRequest,
     ReportEvidenceRequest,
+    ReportReviewRequest,
     ReportTemplateApplyRequest,
     attach_report_evidence,
     apply_report_template,
@@ -12,6 +13,7 @@ from app.modules.reporting.service import (
     get_reporting_hub,
     get_report_templates,
     get_supervisor_review_queue,
+    review_report,
     save_report_draft,
 )
 
@@ -41,6 +43,16 @@ def create_or_update_draft(payload: ReportDraftRequest) -> dict:
 @router.post("/evidence")
 def add_report_evidence(payload: ReportEvidenceRequest) -> dict:
     return attach_report_evidence(payload)
+
+
+@router.post("/review")
+def review_report_draft(payload: ReportReviewRequest) -> dict:
+    if payload.decision.strip().upper() not in {"APPROVE", "REJECT"}:
+        raise HTTPException(status_code=400, detail="Decision must be APPROVE or REJECT")
+    reviewed = review_report(payload)
+    if not reviewed:
+        raise HTTPException(status_code=404, detail="Report draft not found")
+    return reviewed
 
 
 @router.get("/templates")

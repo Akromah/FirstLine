@@ -155,6 +155,23 @@ def test_intake_dispatch_reporting_flow() -> None:
     review_queue_response = client.get("/api/v1/reporting/review-queue")
     assert review_queue_response.status_code == 200
     assert review_queue_response.json()["review_count"] >= 1
+    assert any(item["report_id"] == report_id for item in review_queue_response.json()["reports"])
+
+    review_decision_response = client.post(
+        "/api/v1/reporting/review",
+        json={
+            "report_id": report_id,
+            "reviewer_id": "SUP-101",
+            "decision": "APPROVE",
+            "notes": "Narrative and evidence complete.",
+        },
+    )
+    assert review_decision_response.status_code == 200
+    assert review_decision_response.json()["review_status"] == "APPROVED"
+
+    review_queue_after_approval = client.get("/api/v1/reporting/review-queue")
+    assert review_queue_after_approval.status_code == 200
+    assert all(item["report_id"] != report_id for item in review_queue_after_approval.json()["reports"])
 
     reporting_response = client.post(
         "/api/v1/reporting/rms",
@@ -187,7 +204,7 @@ def test_intake_dispatch_reporting_flow() -> None:
 
     fetch_draft_response = client.get(f"/api/v1/reporting/draft/{report_id}")
     assert fetch_draft_response.status_code == 200
-    assert fetch_draft_response.json()["status"] in {"DRAFT", "SUBMITTED"}
+    assert fetch_draft_response.json()["status"] in {"DRAFT", "SUBMITTED", "READY_FOR_COMMAND", "NEEDS_REVISION"}
     assert len(fetch_draft_response.json().get("evidence_links", [])) >= 1
 
     disposition_response = client.post(

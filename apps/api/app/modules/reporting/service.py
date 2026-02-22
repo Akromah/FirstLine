@@ -78,6 +78,13 @@ class ReportEvidenceRequest(BaseModel):
     uri: str
 
 
+class ReportReviewRequest(BaseModel):
+    report_id: str
+    reviewer_id: str
+    decision: str
+    notes: str | None = None
+
+
 def _find_template(template_id: str) -> dict[str, Any]:
     normalized = template_id.strip().upper()
     for item in TEMPLATE_LIBRARY:
@@ -245,6 +252,15 @@ def attach_report_evidence(payload: ReportEvidenceRequest) -> dict:
     }
 
 
+def review_report(payload: ReportReviewRequest) -> dict | None:
+    return state.review_report_draft(
+        report_id=payload.report_id,
+        reviewer_id=payload.reviewer_id,
+        decision=payload.decision,
+        notes=payload.notes,
+    )
+
+
 def get_supervisor_review_queue() -> dict:
     drafts = state.list_report_drafts()
     queue: list[dict] = []
@@ -252,6 +268,9 @@ def get_supervisor_review_queue() -> dict:
         incident = state.get_incident(draft["incident_id"])
         disposition = incident.get("disposition") if incident else None
         reasons: list[str] = []
+        review_status = draft.get("review_status", "PENDING")
+        if review_status == "APPROVED":
+            continue
 
         if disposition and disposition.get("requires_supervisor_review"):
             reasons.append("Disposition requires supervisor review.")
@@ -267,7 +286,9 @@ def get_supervisor_review_queue() -> dict:
                     "incident_id": draft["incident_id"],
                     "unit_id": draft["unit_id"],
                     "status": draft["status"],
+                    "review_status": review_status,
                     "updated_at": draft["updated_at"],
+                    "review_notes": draft.get("review_notes"),
                     "reasons": reasons,
                 }
             )

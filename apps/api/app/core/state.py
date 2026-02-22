@@ -434,6 +434,11 @@ class InMemoryState:
                 existing["report_meta"] = report_meta or existing.get("report_meta") or {}
                 existing["evidence_links"] = existing.get("evidence_links", [])
                 existing["status"] = status
+                if status in {"DRAFT", "SUBMITTED"}:
+                    existing["review_status"] = "PENDING"
+                    existing["review_notes"] = None
+                    existing["reviewed_by"] = None
+                    existing["reviewed_at"] = None
                 existing["updated_at"] = now
                 report_id = existing["report_id"]
             else:
@@ -448,6 +453,10 @@ class InMemoryState:
                     "report_meta": report_meta or {},
                     "evidence_links": [],
                     "status": status,
+                    "review_status": "PENDING",
+                    "review_notes": None,
+                    "reviewed_by": None,
+                    "reviewed_at": None,
                     "created_at": now,
                     "updated_at": now,
                 }
@@ -507,6 +516,48 @@ class InMemoryState:
                 }
             )
             return target.copy()
+
+    def review_report_draft(
+        self,
+        report_id: str,
+        reviewer_id: str,
+        decision: str,
+        notes: str | None = None,
+    ) -> dict | None:
+        with self._lock:
+            draft = self._report_drafts.get(report_id)
+            if not draft:
+                return None
+
+            normalized = decision.strip().upper()
+            if normalized not in {"APPROVE", "REJECT"}:
+                return None
+
+            now = utc_now_iso()
+            if normalized == "APPROVE":
+                draft["review_status"] = "APPROVED"
+                draft["status"] = "READY_FOR_COMMAND"
+            else:
+                draft["review_status"] = "CHANGES_REQUESTED"
+                draft["status"] = "NEEDS_REVISION"
+            draft["review_notes"] = notes.strip() if notes and notes.strip() else None
+            draft["reviewed_by"] = reviewer_id
+            draft["reviewed_at"] = now
+            draft["updated_at"] = now
+
+            incident = self._incidents.get(draft["incident_id"])
+            if incident:
+                incident["timeline"].append(
+                    {
+                        "event": "report_reviewed",
+                        "time": now,
+                        "unit_id": reviewer_id,
+                        "report_id": report_id,
+                        "decision": draft["review_status"],
+                        "notes": draft["review_notes"],
+                    }
+                )
+            return draft.copy()
 
     def get_report_draft(self, report_id: str) -> dict | None:
         with self._lock:

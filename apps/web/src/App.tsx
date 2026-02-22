@@ -16,7 +16,7 @@ type ReportDraft = {
 type ReportingHub = { drafts: ReportDraft[]; missing_reports: Array<{ incident_id: string; call_type: string; priority: number }> };
 type ReviewQueue = {
   review_count: number;
-  reports: Array<{ report_id: string; incident_id: string; unit_id: string; status: string; updated_at: string; reasons: string[] }>;
+  reports: Array<{ report_id: string; incident_id: string; unit_id: string; status: string; review_status?: string; review_notes?: string | null; updated_at: string; reasons: string[] }>;
 };
 
 type LookupResult = {
@@ -178,6 +178,7 @@ export default function App() {
   const [reportEvidenceType, setReportEvidenceType] = useState("photo");
   const [reportEvidenceUri, setReportEvidenceUri] = useState("");
   const [reportEvidence, setReportEvidence] = useState<Array<{ type: string; uri: string; added_at?: string }>>([]);
+  const [reviewNotesByReport, setReviewNotesByReport] = useState<Record<string, string>>({});
   const [dictationSegments, setDictationSegments] = useState(0);
   const [dictationSeconds, setDictationSeconds] = useState(0);
   const [dictationSupported, setDictationSupported] = useState(false);
@@ -667,6 +668,29 @@ export default function App() {
     }
   }
 
+  async function handleReviewDecision(reportId: string, decision: "APPROVE" | "REJECT") {
+    setLoading(true);
+    try {
+      const notes = reviewNotesByReport[reportId] ?? "";
+      await fetchJson("/api/v1/reporting/review", {
+        method: "POST",
+        body: JSON.stringify({
+          report_id: reportId,
+          reviewer_id: "SUP-001",
+          decision,
+          notes,
+        }),
+      });
+      setBanner(`Report ${reportId} ${decision === "APPROVE" ? "approved" : "sent back"} by supervisor.`);
+      setReviewNotesByReport((prev) => ({ ...prev, [reportId]: "" }));
+      await refreshDashboard();
+    } catch (error) {
+      setBanner(`Review action failed: ${(error as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function handleStartDictation() {
     if (!dictationSupported || !dictationRef.current || isDictating) return;
     try {
@@ -1117,8 +1141,23 @@ export default function App() {
             {(reviewQueue?.reports ?? []).slice(0, 5).map((item) => (
               <div key={item.report_id} className="hub-row">
                 <strong>{item.report_id} · {item.incident_id}</strong>
-                <p>{item.unit_id} · {item.status} · {item.updated_at}</p>
+                <p>{item.unit_id} · {item.status} · Review: {item.review_status ?? "PENDING"}</p>
+                <p>{item.updated_at}</p>
                 <p>{item.reasons.join(" | ")}</p>
+                {item.review_notes ? <p>Latest notes: {item.review_notes}</p> : null}
+                <label className="form-field">
+                  Review Notes
+                  <input
+                    value={reviewNotesByReport[item.report_id] ?? ""}
+                    onChange={(e) => setReviewNotesByReport((prev) => ({ ...prev, [item.report_id]: e.target.value }))}
+                    placeholder="Optional supervisor note"
+                  />
+                </label>
+                <div className="button-grid">
+                  <button type="button" onClick={() => setSelectedIncidentId(item.incident_id)} disabled={loading}>Open Incident</button>
+                  <button type="button" onClick={() => handleReviewDecision(item.report_id, "APPROVE")} disabled={loading}>Approve</button>
+                  <button type="button" onClick={() => handleReviewDecision(item.report_id, "REJECT")} disabled={loading}>Request Changes</button>
+                </div>
               </div>
             ))}
             {(reviewQueue?.reports ?? []).length === 0 ? <div className="dispatch-banner">No reports currently require supervisor intervention.</div> : null}
