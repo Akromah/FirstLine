@@ -310,6 +310,15 @@ type HandoffFeed = {
   note_count: number;
   notes: HandoffNote[];
 };
+type MessagingContact = {
+  unit_id: string;
+  display_name: string;
+  subtitle: string;
+  status: string;
+  unread_count: number;
+  last_message_at?: string | null;
+  last_message_preview?: string | null;
+};
 type OfficerFeed = {
   unit_id: string;
   assigned_incidents: Array<{
@@ -586,6 +595,7 @@ export default function App() {
   const [messageInbox, setMessageInbox] = useState<MessageInbox | null>(null);
   const [officerFeed, setOfficerFeed] = useState<OfficerFeed | null>(null);
   const [messageTarget, setMessageTarget] = useState("DISPATCH");
+  const [messageContactSearch, setMessageContactSearch] = useState("");
   const [messagePriority, setMessagePriority] = useState("NORMAL");
   const [channelIncidentId, setChannelIncidentId] = useState("");
   const [incidentChannel, setIncidentChannel] = useState<IncidentChannel | null>(null);
@@ -695,7 +705,7 @@ export default function App() {
       }
       try {
         const [inbox, feed] = await Promise.all([
-          fetchJson<MessageInbox>(`/api/v1/officer/messages/${statusUnitId}?limit=12`),
+          fetchJson<MessageInbox>(`/api/v1/officer/messages/${statusUnitId}?limit=40`),
           fetchJson<OfficerFeed>(`/api/v1/officer/feed/${statusUnitId}`),
         ]);
         setMessageInbox(inbox);
@@ -761,7 +771,7 @@ export default function App() {
         ? fetchJson<OfficerFeed>(`/api/v1/officer/feed/${statusUnitIdRef.current}`).catch(() => null)
         : Promise.resolve(null);
       const inboxPromise = statusUnitIdRef.current
-        ? fetchJson<MessageInbox>(`/api/v1/officer/messages/${statusUnitIdRef.current}?limit=12`).catch(() => null)
+        ? fetchJson<MessageInbox>(`/api/v1/officer/messages/${statusUnitIdRef.current}?limit=40`).catch(() => null)
         : Promise.resolve(null);
       const channelPromise = selectedIncidentIdRef.current
         ? fetchJson<IncidentChannel>(`/api/v1/officer/channel/${selectedIncidentIdRef.current}?limit=10`).catch(() => null)
@@ -1817,7 +1827,7 @@ export default function App() {
       setMessageBody("");
       setMessageStatus(`Message sent to ${messageTarget}${incidentId ? ` on ${incidentId}` : ""}.`);
       const [inbox, channel] = await Promise.all([
-        fetchJson<MessageInbox>(`/api/v1/officer/messages/${statusUnitId}?limit=12`),
+        fetchJson<MessageInbox>(`/api/v1/officer/messages/${statusUnitId}?limit=40`),
         incidentId ? fetchJson<IncidentChannel>(`/api/v1/officer/channel/${incidentId}?limit=10`) : Promise.resolve(null),
       ]);
       setMessageInbox(inbox);
@@ -2170,6 +2180,98 @@ export default function App() {
     if (!unitId) return null;
     return units.find((unit) => unit.unit_id === unitId) ?? null;
   }, [incidentDetail?.incident?.assigned_unit_id, units]);
+  const inboxMessages = messageInbox?.messages ?? [];
+  const conversationLastByCounterpart = useMemo(() => {
+    const lookup: Record<string, MessageThread> = {};
+    inboxMessages.forEach((message) => {
+      const counterpart = message.from_unit === statusUnitId ? message.to_unit : message.from_unit;
+      if (!counterpart || counterpart === statusUnitId) return;
+      const existing = lookup[counterpart];
+      if (!existing || existing.sent_at < message.sent_at) lookup[counterpart] = message;
+    });
+    return lookup;
+  }, [inboxMessages, statusUnitId]);
+  const unreadByCounterpart = useMemo(() => {
+    const lookup: Record<string, number> = {};
+    inboxMessages.forEach((message) => {
+      if (message.to_unit !== statusUnitId || message.from_unit === statusUnitId) return;
+      lookup[message.from_unit] = (lookup[message.from_unit] ?? 0) + 1;
+    });
+    return lookup;
+  }, [inboxMessages, statusUnitId]);
+  const messagingContacts = useMemo(() => {
+    const contacts = new Map<string, MessagingContact>();
+    contacts.set("DISPATCH", {
+      unit_id: "DISPATCH",
+      display_name: "Dispatch",
+      subtitle: "Communications",
+      status: "ONLINE",
+      unread_count: unreadByCounterpart.DISPATCH ?? 0,
+      last_message_at: conversationLastByCounterpart.DISPATCH?.sent_at ?? null,
+      last_message_preview: conversationLastByCounterpart.DISPATCH?.body ?? null,
+    });
+
+    units
+      .filter((unit) => unit.unit_id !== statusUnitId && unit.status !== "OFF_DUTY")
+      .forEach((unit) => {
+        const last = conversationLastByCounterpart[unit.unit_id];
+        contacts.set(unit.unit_id, {
+          unit_id: unit.unit_id,
+          display_name: `${unit.callsign} - ${unit.officer_name ?? "Unassigned"}`,
+          subtitle: `${unit.role} · ${unit.status}`,
+          status: unit.status,
+          unread_count: unreadByCounterpart[unit.unit_id] ?? 0,
+          last_message_at: last?.sent_at ?? null,
+          last_message_preview: last?.body ?? null,
+        });
+      });
+
+    Object.keys(conversationLastByCounterpart).forEach((counterpart) => {
+      if (counterpart === statusUnitId || contacts.has(counterpart)) return;
+      const last = conversationLastByCounterpart[counterpart];
+      contacts.set(counterpart, {
+        unit_id: counterpart,
+        display_name: counterpart,
+        subtitle: "Recent contact",
+        status: "UNKNOWN",
+        unread_count: unreadByCounterpart[counterpart] ?? 0,
+        last_message_at: last?.sent_at ?? null,
+        last_message_preview: last?.body ?? null,
+      });
+    });
+
+    return Array.from(contacts.values()).sort((a, b) => {
+      if (a.unread_count !== b.unread_count) return b.unread_count - a.unread_count;
+      if ((a.last_message_at ?? "") !== (b.last_message_at ?? "")) return (b.last_message_at ?? "").localeCompare(a.last_message_at ?? "");
+      return a.display_name.localeCompare(b.display_name);
+    });
+  }, [units, statusUnitId, unreadByCounterpart, conversationLastByCounterpart]);
+  const filteredMessagingContacts = useMemo(() => {
+    const query = messageContactSearch.trim().toLowerCase();
+    if (!query) return messagingContacts;
+    return messagingContacts.filter(
+      (contact) =>
+        contact.display_name.toLowerCase().includes(query) ||
+        contact.subtitle.toLowerCase().includes(query) ||
+        contact.unit_id.toLowerCase().includes(query)
+    );
+  }, [messagingContacts, messageContactSearch]);
+  const activeMessagingContact = useMemo(
+    () => messagingContacts.find((contact) => contact.unit_id === messageTarget) ?? null,
+    [messagingContacts, messageTarget]
+  );
+  const directConversation = useMemo(
+    () =>
+      inboxMessages
+        .filter((message) => {
+          if (!messageTarget) return false;
+          const outbound = message.from_unit === statusUnitId && message.to_unit === messageTarget;
+          const inbound = message.to_unit === statusUnitId && message.from_unit === messageTarget;
+          return outbound || inbound;
+        })
+        .sort((a, b) => a.sent_at.localeCompare(b.sent_at)),
+    [inboxMessages, statusUnitId, messageTarget]
+  );
   const moduleCounts: Partial<Record<ModulePanel, number>> = {
     queue: filteredQueue.length,
     priorityRadar: priorityBoard?.incidents.filter((item) => item.risk_score >= 80).length,
@@ -2313,6 +2415,13 @@ export default function App() {
     if (!activeModuleGroup) return;
     setOpenModuleGroups((prev) => (prev[activeModuleGroup] ? prev : { ...prev, [activeModuleGroup]: true }));
   }, [activeModuleGroup]);
+
+  useEffect(() => {
+    if (messagingContacts.length === 0) return;
+    if (!messagingContacts.some((contact) => contact.unit_id === messageTarget)) {
+      setMessageTarget(messagingContacts[0].unit_id);
+    }
+  }, [messagingContacts, messageTarget]);
 
   useEffect(() => {
     if (!mapRef.current) return;
@@ -3384,47 +3493,114 @@ export default function App() {
 
           {activeModule === "messaging" ? (
           <article className="card panel">
-            <h2>Secure Messaging</h2>
-            <p className="section-subtitle">Unit {statusUnitId} · Inbox {messageInbox?.message_count ?? 0}</p>
-            <div className="dispatch-form-grid">
-              <label className="form-field">To<input value={messageTarget} onChange={(e) => setMessageTarget(e.target.value)} placeholder="DISPATCH or unit id" /></label>
-              <label className="form-field">Priority<select value={messagePriority} onChange={(e) => setMessagePriority(e.target.value)}><option value="NORMAL">NORMAL</option><option value="HIGH">HIGH</option><option value="URGENT">URGENT</option></select></label>
-              <label className="form-field">Incident Channel<input value={channelIncidentId} onChange={(e) => setChannelIncidentId(e.target.value)} placeholder="INC-..." /></label>
-              <label className="form-field">Unread Estimate<input value={String(messageInbox?.unread_estimate ?? 0)} readOnly /></label>
-              <label className="form-field wide">Message<textarea value={messageBody} onChange={(e) => setMessageBody(e.target.value)} placeholder="Short tactical update..." /></label>
-            </div>
-            <div className="toggle-row">
-              <label><input type="checkbox" checked={sendToIncidentChannel} onChange={(e) => setSendToIncidentChannel(e.target.checked)} /> Tag to incident channel</label>
-            </div>
-            <div className="dev-actions"><button type="button" onClick={handleSendMessage} disabled={loading || !messageBody.trim()}>Send Secure Message</button></div>
-            {messageStatus ? <div className="dispatch-banner">{messageStatus}</div> : null}
-            <div className="hub-grid">
-              <div className="hub-col">
-                <h3>Inbox</h3>
-                <div className="timeline-list">
-                  {(messageInbox?.messages ?? []).slice(0, 5).map((message) => (
-                    <div key={message.message_id} className="timeline-item">
-                      <strong>{message.from_unit} {"->"} {message.to_unit}</strong>
-                      <p>{message.sent_at}</p>
-                      <p>{message.priority ?? "NORMAL"} {message.incident_id ? `· ${message.incident_id}` : ""}</p>
-                      <p>{message.body}</p>
-                    </div>
-                  ))}
+            <h2>Messaging Hub</h2>
+            <p className="section-subtitle">
+              Unit {statusUnitId} · Contacts online {messagingContacts.length} · Inbox {messageInbox?.message_count ?? 0}
+            </p>
+            <div className="messaging-shell">
+              <aside className="messaging-roster">
+                <div className="search-row">
+                  <input
+                    value={messageContactSearch}
+                    onChange={(e) => setMessageContactSearch(e.target.value)}
+                    placeholder="Search officer, callsign, or unit..."
+                  />
                 </div>
-              </div>
-              <div className="hub-col">
-                <h3>Incident Channel {incidentChannel?.incident_id ?? ""}</h3>
-                <div className="timeline-list">
-                  {(incidentChannel?.messages ?? []).slice(0, 5).map((message) => (
-                    <div key={`channel-${message.message_id}`} className="timeline-item">
-                      <strong>{message.from_unit}</strong>
-                      <p>{message.sent_at}</p>
-                      <p>{message.priority ?? "NORMAL"}</p>
-                      <p>{message.body}</p>
-                    </div>
+                <div className="messaging-contact-list">
+                  {filteredMessagingContacts.map((contact) => (
+                    <button
+                      key={contact.unit_id}
+                      type="button"
+                      className={`message-contact ${messageTarget === contact.unit_id ? "active" : ""}`}
+                      onClick={() => setMessageTarget(contact.unit_id)}
+                    >
+                      <div>
+                        <strong>{contact.display_name}</strong>
+                        <p>{contact.subtitle}</p>
+                        {contact.last_message_preview ? <p>{contact.last_message_preview}</p> : null}
+                      </div>
+                      <div className="message-contact-meta">
+                        {contact.unread_count > 0 ? <span className="badge soft ok">{contact.unread_count}</span> : null}
+                        <span className="badge soft">{contact.status}</span>
+                      </div>
+                    </button>
                   ))}
+                  {filteredMessagingContacts.length === 0 ? <div className="dispatch-banner warn">No contacts match your search.</div> : null}
                 </div>
-              </div>
+              </aside>
+              <section className="messaging-thread">
+                <div className="dispatch-form-grid">
+                  <label className="form-field">
+                    Recipient
+                    <select value={messageTarget} onChange={(e) => setMessageTarget(e.target.value)}>
+                      {messagingContacts.map((contact) => (
+                        <option key={contact.unit_id} value={contact.unit_id}>
+                          {contact.display_name} ({contact.unit_id})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="form-field">
+                    Priority
+                    <select value={messagePriority} onChange={(e) => setMessagePriority(e.target.value)}>
+                      <option value="NORMAL">NORMAL</option>
+                      <option value="HIGH">HIGH</option>
+                      <option value="URGENT">URGENT</option>
+                    </select>
+                  </label>
+                  <label className="form-field">
+                    Incident Channel
+                    <input value={channelIncidentId} onChange={(e) => setChannelIncidentId(e.target.value)} placeholder="INC-..." />
+                  </label>
+                  <label className="form-field">
+                    Unread From Contact
+                    <input value={String(activeMessagingContact?.unread_count ?? 0)} readOnly />
+                  </label>
+                  <label className="form-field wide">
+                    Message
+                    <textarea value={messageBody} onChange={(e) => setMessageBody(e.target.value)} placeholder="Short tactical update..." />
+                  </label>
+                </div>
+                <div className="toggle-row">
+                  <label><input type="checkbox" checked={sendToIncidentChannel} onChange={(e) => setSendToIncidentChannel(e.target.checked)} /> Tag to incident channel</label>
+                </div>
+                <div className="dev-actions"><button type="button" onClick={handleSendMessage} disabled={loading || !messageBody.trim() || !messageTarget}>Send Secure Message</button></div>
+                {messageStatus ? <div className="dispatch-banner">{messageStatus}</div> : null}
+                <div className="dispatch-banner">
+                  Active conversation: {(activeMessagingContact?.display_name ?? messageTarget) || "None"}{activeMessagingContact?.last_message_at ? ` · last ${activeMessagingContact.last_message_at}` : ""}
+                </div>
+                <div className="timeline-list messaging-thread-list">
+                  {directConversation.length === 0 ? (
+                    <div className="dispatch-banner warn">No direct messages yet. Send the first message to start this thread.</div>
+                  ) : (
+                    directConversation.map((message) => (
+                      <div
+                        key={`direct-${message.message_id}`}
+                        className={`message-bubble ${message.from_unit === statusUnitId ? "outbound" : "inbound"}`}
+                      >
+                        <strong>{message.from_unit === statusUnitId ? "You" : message.from_unit}</strong>
+                        <p>{message.sent_at}</p>
+                        <p>{message.priority ?? "NORMAL"} {message.incident_id ? `· ${message.incident_id}` : ""}</p>
+                        <p>{message.body}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </section>
+            </div>
+            <div className="hub-row">
+              <strong>Incident Channel {(incidentChannel?.incident_id ?? channelIncidentId) || "Not selected"}</strong>
+              <p>Shared incident traffic for all units tagged to the call.</p>
+            </div>
+            <div className="timeline-list">
+              {(incidentChannel?.messages ?? []).slice(0, 6).map((message) => (
+                <div key={`channel-${message.message_id}`} className="timeline-item">
+                  <strong>{message.from_unit}</strong>
+                  <p>{message.sent_at}</p>
+                  <p>{message.priority ?? "NORMAL"}</p>
+                  <p>{message.body}</p>
+                </div>
+              ))}
             </div>
           </article>
           ) : null}

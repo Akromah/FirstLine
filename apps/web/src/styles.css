@@ -996,6 +996,111 @@ body {
   font-size: 12px;
 }
 
+.messaging-shell {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.messaging-roster {
+  border: 1px solid #29476f;
+  border-radius: 10px;
+  background: #101f36;
+  padding: 8px;
+}
+
+.messaging-contact-list {
+  margin-top: 8px;
+  display: grid;
+  gap: 6px;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.message-contact {
+  border: 1px solid #2f4d77;
+  border-radius: 10px;
+  background: #132844;
+  color: #e8f2ff;
+  width: 100%;
+  min-height: 58px;
+  padding: 8px;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.message-contact:hover {
+  border-color: #5f95ff;
+}
+
+.message-contact.active {
+  border-color: #79a6ff;
+  background: #1b3458;
+}
+
+.message-contact strong {
+  display: block;
+  font-size: 12px;
+}
+
+.message-contact p {
+  margin: 3px 0 0;
+  color: #b9cdee;
+  font-size: 11px;
+}
+
+.message-contact-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
+}
+
+.messaging-thread {
+  border: 1px solid #29476f;
+  border-radius: 10px;
+  background: #101f36;
+  padding: 8px;
+}
+
+.messaging-thread-list {
+  max-height: 340px;
+  overflow: auto;
+}
+
+.message-bubble {
+  border: 1px solid #2e4d77;
+  border-radius: 10px;
+  padding: 8px;
+  background: #122540;
+}
+
+.message-bubble strong {
+  display: block;
+  color: #eaf3ff;
+  font-size: 12px;
+}
+
+.message-bubble p {
+  margin: 4px 0 0;
+  color: #bfd2ef;
+  font-size: 12px;
+}
+
+.message-bubble.outbound {
+  border-color: #2fbc67;
+  background: #153427;
+}
+
+.message-bubble.inbound {
+  border-color: #365a8c;
+  background: #122540;
+}
+
 .search-row {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -1385,6 +1490,10 @@ body {
   }
 
   .hub-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .messaging-shell {
     grid-template-columns: 1fr;
   }
 
