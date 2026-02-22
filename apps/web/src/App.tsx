@@ -1037,10 +1037,10 @@ export default function App() {
     }
   }
 
-  async function handleLookup() {
+  async function runIntelLookup(query: string) {
     setLoading(true);
     try {
-      const result = await fetchJson<LookupResult>(`/api/v1/intel/lookup?query=${encodeURIComponent(intelQuery)}`);
+      const result = await fetchJson<LookupResult>(`/api/v1/intel/lookup?query=${encodeURIComponent(query)}`);
       setLookup(result);
       setBanner(`Intel hit count: ${result.records.length + result.firearms.length + result.warrants.length}`);
     } catch (error) {
@@ -1048,6 +1048,28 @@ export default function App() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleLookup() {
+    await runIntelLookup(intelQuery);
+  }
+
+  async function handleQuickIntel(mode: "ADDRESS" | "CALLER" | "WARRANTS") {
+    if (mode === "ADDRESS") {
+      const query = selectedIncident?.address ?? intelQuery;
+      setIntelQuery(query);
+      await runIntelLookup(query);
+      return;
+    }
+    if (mode === "CALLER") {
+      const query = callerName || intelQuery;
+      setIntelQuery(query);
+      await runIntelLookup(query);
+      return;
+    }
+    const query = "W-";
+    setIntelQuery(query);
+    await runIntelLookup(query);
   }
 
   async function handleLoadProfile(personId: string) {
@@ -1377,6 +1399,12 @@ export default function App() {
             <div className="search-row">
               <input value={intelQuery} onChange={(e) => setIntelQuery(e.target.value)} />
               <button type="button" onClick={handleLookup} disabled={loading}>Run Lookup</button>
+            </div>
+            <div className="button-grid">
+              <button type="button" onClick={() => handleQuickIntel("ADDRESS")} disabled={loading}>Lookup Selected Address</button>
+              <button type="button" onClick={() => handleQuickIntel("CALLER")} disabled={loading}>Lookup Caller Name</button>
+              <button type="button" onClick={() => handleQuickIntel("WARRANTS")} disabled={loading}>Lookup Warrants</button>
+              <button type="button" onClick={() => { setIntelQuery("Brandon"); handleLookup(); }} disabled={loading}>Load Demo Person</button>
             </div>
             <div className="hub-grid">
               <div className="hub-col">
