@@ -399,6 +399,16 @@ type ModulePanel =
   | "mobileControls"
   | "messaging"
   | "hotkeys";
+type ModuleGroupId = "ops" | "field" | "reporting" | "intel" | "command" | "system";
+type ModuleButton = {
+  id: ModulePanel;
+  label: string;
+  icon: string;
+  iconStyle?: "default" | "policyBook" | "codeBook";
+  group: ModuleGroupId;
+  visible: boolean;
+  badge?: number;
+};
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
 const MAP_STYLE_URL =
@@ -471,6 +481,14 @@ export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>("Dispatch");
   const [activeModule, setActiveModule] = useState<ModulePanel>("queue");
   const [moduleSearch, setModuleSearch] = useState("");
+  const [openModuleGroups, setOpenModuleGroups] = useState<Record<ModuleGroupId, boolean>>({
+    ops: true,
+    field: true,
+    reporting: true,
+    intel: true,
+    command: false,
+    system: false,
+  });
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commandPaletteQuery, setCommandPaletteQuery] = useState("");
   const [loading, setLoading] = useState(false);
@@ -2164,28 +2182,40 @@ export default function App() {
     messaging: messageInbox?.unread_estimate,
     unitReadiness: availabilityBoard?.summary.unavailable_count,
   };
-  const moduleButtons: Array<{ id: ModulePanel; label: string; icon: string; visible: boolean; badge?: number }> = [
-    { id: "mapOnly", label: "Map Only", icon: "MAP", visible: true },
-    { id: "intake", label: "Intake", icon: "911", visible: showDispatch },
-    { id: "queue", label: "Active Queue", icon: "Q", visible: showDispatch || showField || showReport, badge: moduleCounts.queue },
-    { id: "priorityRadar", label: "Priority Radar", icon: "R", visible: showDispatch || showField, badge: moduleCounts.priorityRadar },
-    { id: "fieldOps", label: "Field Ops", icon: "F", visible: showField || showDispatch },
-    { id: "assignedDeck", label: "Assigned Deck", icon: "A", visible: showField, badge: moduleCounts.assignedDeck },
-    { id: "reportHub", label: "Report Hub", icon: "RP", visible: showReport || showField || showDispatch, badge: moduleCounts.reportHub },
-    { id: "intelHub", label: "Intel Hub", icon: "DB", visible: showIntel || showField || showDispatch },
-    { id: "policyHub", label: "Policy Hub", icon: "POL", visible: showIntel || showField || showDispatch, badge: moduleCounts.policyHub },
-    { id: "codeHub", label: "Code Hub", icon: "PC", visible: showIntel || showField || showDispatch, badge: moduleCounts.codeHub },
-    { id: "commandDash", label: "Command", icon: "CMD", visible: showDispatch || showReport },
-    { id: "unitReadiness", label: "Unit Board", icon: "U", visible: showDispatch || showField, badge: moduleCounts.unitReadiness },
-    { id: "opTrends", label: "Trends", icon: "T", visible: showDispatch || showReport },
-    { id: "reviewQueue", label: "Review Queue", icon: "RV", visible: showDispatch || showReport, badge: moduleCounts.reviewQueue },
-    { id: "reportingMetrics", label: "Report Metrics", icon: "M", visible: showDispatch || showReport, badge: moduleCounts.reportingMetrics },
-    { id: "aiOps", label: "AI Ops", icon: "AI", visible: showDispatch || showReport },
-    { id: "recommendation", label: "Recommend", icon: "REC", visible: showDispatch },
-    { id: "disposition", label: "Disposition", icon: "FIN", visible: showDispatch || showField || showReport },
-    { id: "mobileControls", label: "Mobile Controls", icon: "MOB", visible: showField },
-    { id: "messaging", label: "Messaging", icon: "MSG", visible: showField || showDispatch, badge: moduleCounts.messaging },
-    { id: "hotkeys", label: "Hotkeys", icon: "HK", visible: true },
+  const moduleGroups: Array<{ id: ModuleGroupId; label: string; description: string; icon: string }> = [
+    { id: "ops", label: "Core Ops", description: "Intake, queue, and map-first dispatch controls.", icon: "OPS" },
+    { id: "field", label: "Field", description: "Officer workflow and mobile tools.", icon: "FLD" },
+    { id: "reporting", label: "Reporting", description: "Drafts, supervisor review, and RMS readiness.", icon: "RPT" },
+    { id: "intel", label: "Intel", description: "Records, policies, and penal code references.", icon: "INT" },
+    { id: "command", label: "Command", description: "Oversight metrics and operational trends.", icon: "CMD" },
+    { id: "system", label: "System", description: "Simulation controls and utility modules.", icon: "SYS" },
+  ];
+  const moduleGroupLabelById = moduleGroups.reduce(
+    (lookup, group) => ({ ...lookup, [group.id]: group.label }),
+    {} as Record<ModuleGroupId, string>
+  );
+  const moduleButtons: ModuleButton[] = [
+    { id: "mapOnly", label: "Map Only", icon: "MAP", group: "ops", visible: true },
+    { id: "intake", label: "Intake", icon: "911", group: "ops", visible: showDispatch },
+    { id: "queue", label: "Active Queue", icon: "Q", group: "ops", visible: showDispatch || showField || showReport, badge: moduleCounts.queue },
+    { id: "priorityRadar", label: "Priority Radar", icon: "RAD", group: "ops", visible: showDispatch || showField, badge: moduleCounts.priorityRadar },
+    { id: "recommendation", label: "Unit Recs", icon: "REC", group: "ops", visible: showDispatch },
+    { id: "unitReadiness", label: "Unit Board", icon: "UNIT", group: "ops", visible: showDispatch || showField, badge: moduleCounts.unitReadiness },
+    { id: "fieldOps", label: "Field Ops", icon: "OPS", group: "field", visible: showField || showDispatch },
+    { id: "assignedDeck", label: "Assigned Deck", icon: "CAR", group: "field", visible: showField, badge: moduleCounts.assignedDeck },
+    { id: "mobileControls", label: "Mobile Controls", icon: "MOB", group: "field", visible: showField },
+    { id: "messaging", label: "Messaging", icon: "MSG", group: "field", visible: showField || showDispatch, badge: moduleCounts.messaging },
+    { id: "disposition", label: "Disposition", icon: "FIN", group: "field", visible: showDispatch || showField || showReport },
+    { id: "reportHub", label: "Report Hub", icon: "RPT", group: "reporting", visible: showReport || showField || showDispatch, badge: moduleCounts.reportHub },
+    { id: "reviewQueue", label: "Review Queue", icon: "REV", group: "reporting", visible: showDispatch || showReport, badge: moduleCounts.reviewQueue },
+    { id: "reportingMetrics", label: "Report Metrics", icon: "MET", group: "reporting", visible: showDispatch || showReport, badge: moduleCounts.reportingMetrics },
+    { id: "intelHub", label: "Intel Hub", icon: "DB", group: "intel", visible: showIntel || showField || showDispatch },
+    { id: "policyHub", label: "Policy Hub", icon: "POL", iconStyle: "policyBook", group: "intel", visible: showIntel || showField || showDispatch, badge: moduleCounts.policyHub },
+    { id: "codeHub", label: "Code Hub", icon: "TXT", iconStyle: "codeBook", group: "intel", visible: showIntel || showField || showDispatch, badge: moduleCounts.codeHub },
+    { id: "commandDash", label: "Command", icon: "CMD", group: "command", visible: showDispatch || showReport },
+    { id: "opTrends", label: "Trends", icon: "TRD", group: "command", visible: showDispatch || showReport },
+    { id: "aiOps", label: "AI Ops", icon: "AI", group: "command", visible: showDispatch || showReport },
+    { id: "hotkeys", label: "Hotkeys", icon: "HK", group: "system", visible: true },
   ];
   const rightColumnModules: ModulePanel[] = [
     "commandDash",
@@ -2201,9 +2231,20 @@ export default function App() {
     "hotkeys",
   ];
   const rightColumnActive = rightColumnModules.includes(activeModule);
-  const visibleModuleButtons = moduleButtons.filter(
-    (item) => item.visible && item.label.toLowerCase().includes(moduleSearch.trim().toLowerCase())
-  );
+  const moduleSearchQuery = moduleSearch.trim().toLowerCase();
+  const visibleModuleButtons = moduleButtons.filter((item) => {
+    if (!item.visible) return false;
+    if (!moduleSearchQuery) return true;
+    const groupLabel = moduleGroupLabelById[item.group].toLowerCase();
+    return (
+      item.label.toLowerCase().includes(moduleSearchQuery) ||
+      item.id.toLowerCase().includes(moduleSearchQuery) ||
+      groupLabel.includes(moduleSearchQuery)
+    );
+  });
+  const groupedVisibleModules = moduleGroups
+    .map((group) => ({ ...group, items: visibleModuleButtons.filter((item) => item.group === group.id) }))
+    .filter((group) => group.items.length > 0);
   const commandPaletteItems = [
     {
       id: "refresh",
@@ -2257,7 +2298,7 @@ export default function App() {
       .map((item) => ({
         id: `module-${item.id}`,
         label: `Open ${item.label}`,
-        hint: "Module",
+        hint: `Module · ${moduleGroupLabelById[item.group]}`,
         run: () => setActiveModule(item.id),
       })),
   ];
@@ -2266,6 +2307,12 @@ export default function App() {
     if (!query) return true;
     return item.label.toLowerCase().includes(query) || item.hint.toLowerCase().includes(query);
   });
+  const activeModuleGroup = moduleButtons.find((item) => item.id === activeModule)?.group;
+
+  useEffect(() => {
+    if (!activeModuleGroup) return;
+    setOpenModuleGroups((prev) => (prev[activeModuleGroup] ? prev : { ...prev, [activeModuleGroup]: true }));
+  }, [activeModuleGroup]);
 
   useEffect(() => {
     if (!mapRef.current) return;
@@ -2347,25 +2394,66 @@ export default function App() {
       </div>
 
       <section className="module-dock">
-        <input
-          className="module-search"
-          value={moduleSearch}
-          onChange={(e) => setModuleSearch(e.target.value)}
-          placeholder="Find module..."
-        />
-        {visibleModuleButtons.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            className={`module-btn ${activeModule === item.id ? "active" : ""}`}
-            onClick={() => setActiveModule(item.id)}
-          >
-            <span className="module-icon">{item.icon}</span>
-            {item.label}
-            {typeof item.badge === "number" ? <span className="module-count">{item.badge}</span> : null}
-          </button>
-        ))}
-        {visibleModuleButtons.length === 0 ? <span className="chip">No module matches filter.</span> : null}
+        <div className="module-dock-head">
+          <input
+            className="module-search"
+            value={moduleSearch}
+            onChange={(e) => setModuleSearch(e.target.value)}
+            placeholder="Find module or hub..."
+          />
+          <p className="module-dock-note">
+            Modules are grouped by workflow. Expand a group, then pick a hub.
+          </p>
+        </div>
+        <div className="module-groups">
+          {groupedVisibleModules.map((group) => {
+            const searchOpen = Boolean(moduleSearchQuery);
+            const groupOpen = searchOpen || openModuleGroups[group.id];
+            return (
+              <section key={group.id} className="module-group">
+                <button
+                  type="button"
+                  className={`module-group-toggle ${groupOpen ? "open" : ""}`}
+                  onClick={() =>
+                    setOpenModuleGroups((prev) => ({
+                      ...prev,
+                      [group.id]: searchOpen ? true : !groupOpen,
+                    }))
+                  }
+                >
+                  <span className="module-group-icon">{group.icon}</span>
+                  <span className="module-group-copy">
+                    <strong>{group.label}</strong>
+                    <span>{group.description}</span>
+                  </span>
+                  <span className="module-group-count">{group.items.length}</span>
+                </button>
+                {groupOpen ? (
+                  <div className="module-submenu">
+                    {group.items.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={`module-btn ${activeModule === item.id ? "active" : ""}`}
+                        onClick={() => {
+                          setActiveModule(item.id);
+                          setOpenModuleGroups((prev) => ({ ...prev, [group.id]: true }));
+                        }}
+                      >
+                        <span className={`module-icon ${item.iconStyle === "policyBook" ? "policy-book" : item.iconStyle === "codeBook" ? "code-book" : ""}`}>
+                          {item.icon}
+                        </span>
+                        {item.label}
+                        {typeof item.badge === "number" ? <span className="module-count">{item.badge}</span> : null}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
+            );
+          })}
+        </div>
+        {groupedVisibleModules.length === 0 ? <span className="chip">No module matches filter.</span> : null}
       </section>
 
       <main className={`layout ${rightColumnActive ? "" : "map-focus"}`.trim()}>
