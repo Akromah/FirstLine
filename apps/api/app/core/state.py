@@ -684,7 +684,14 @@ class InMemoryState:
                 "confidence": round(min(0.97, 0.63 + (incident["priority"] / 300)), 2),
             }
 
-    def add_message(self, from_unit: str, to_unit: str, body: str) -> dict:
+    def add_message(
+        self,
+        from_unit: str,
+        to_unit: str,
+        body: str,
+        incident_id: str | None = None,
+        priority: str = "NORMAL",
+    ) -> dict:
         with self._lock:
             self._message_sequence += 1
             now = utc_now_iso()
@@ -693,6 +700,8 @@ class InMemoryState:
                 "from_unit": from_unit,
                 "to_unit": to_unit,
                 "body": body,
+                "incident_id": incident_id,
+                "priority": priority,
                 "sent_at": now,
             }
             self._messages.append(message)
@@ -704,6 +713,16 @@ class InMemoryState:
                 item.copy()
                 for item in self._messages
                 if item["to_unit"] == unit_id or item["from_unit"] == unit_id
+            ]
+            scoped.sort(key=lambda row: row["sent_at"], reverse=True)
+            return scoped[: max(1, min(limit, 200))]
+
+    def list_messages_for_incident(self, incident_id: str, limit: int = 40) -> list[dict]:
+        with self._lock:
+            scoped = [
+                item.copy()
+                for item in self._messages
+                if item.get("incident_id") == incident_id
             ]
             scoped.sort(key=lambda row: row["sent_at"], reverse=True)
             return scoped[: max(1, min(limit, 200))]

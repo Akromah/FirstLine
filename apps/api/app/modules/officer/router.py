@@ -5,6 +5,7 @@ from app.modules.officer.service import (
     OfficerStatusUpdate,
     SecureMessage,
     active_calls_for_unit,
+    incident_channel,
     message_inbox,
     post_message,
     submit_action,
@@ -37,3 +38,8 @@ def secure_message(payload: SecureMessage) -> dict:
 @router.get("/messages/{unit_id}")
 def officer_message_inbox(unit_id: str, limit: int = 40) -> dict:
     return message_inbox(unit_id, limit=limit)
+
+
+@router.get("/channel/{incident_id}")
+def incident_message_channel(incident_id: str, limit: int = 60) -> dict:
+    return incident_channel(incident_id, limit=limit)

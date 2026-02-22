@@ -55,12 +55,19 @@ type MessageThread = {
   from_unit: string;
   to_unit: string;
   body: string;
+  incident_id?: string | null;
+  priority?: string;
   sent_at: string;
 };
 type MessageInbox = {
   unit_id: string;
   message_count: number;
   unread_estimate: number;
+  messages: MessageThread[];
+};
+type IncidentChannel = {
+  incident_id: string;
+  message_count: number;
   messages: MessageThread[];
 };
 type OfficerFeed = {
@@ -188,6 +195,10 @@ export default function App() {
   const [messageInbox, setMessageInbox] = useState<MessageInbox | null>(null);
   const [officerFeed, setOfficerFeed] = useState<OfficerFeed | null>(null);
   const [messageTarget, setMessageTarget] = useState("DISPATCH");
+  const [messagePriority, setMessagePriority] = useState("NORMAL");
+  const [channelIncidentId, setChannelIncidentId] = useState("");
+  const [incidentChannel, setIncidentChannel] = useState<IncidentChannel | null>(null);
+  const [sendToIncidentChannel, setSendToIncidentChannel] = useState(true);
   const [messageBody, setMessageBody] = useState("");
   const [messageStatus, setMessageStatus] = useState("");
 
@@ -238,6 +249,22 @@ export default function App() {
   }, [statusUnitId]);
 
   useEffect(() => {
+    async function loadIncidentChannel() {
+      if (!channelIncidentId) {
+        setIncidentChannel(null);
+        return;
+      }
+      try {
+        const channel = await fetchJson<IncidentChannel>(`/api/v1/officer/channel/${channelIncidentId}?limit=10`);
+        setIncidentChannel(channel);
+      } catch {
+        setIncidentChannel(null);
+      }
+    }
+    loadIncidentChannel();
+  }, [channelIncidentId]);
+
+  useEffect(() => {
     if (sessionRole === "Officer") setViewMode("Field");
     if (sessionRole === "Supervisor") setViewMode("Dispatch");
     if (sessionRole === "Dispatcher") setViewMode("Dispatch");
@@ -251,7 +278,10 @@ export default function App() {
       const inboxPromise = statusUnitIdRef.current
         ? fetchJson<MessageInbox>(`/api/v1/officer/messages/${statusUnitIdRef.current}?limit=12`).catch(() => null)
         : Promise.resolve(null);
-      const [q, u, c, m, h, rq, inbox, feed] = await Promise.all([
+      const channelPromise = selectedIncidentIdRef.current
+        ? fetchJson<IncidentChannel>(`/api/v1/officer/channel/${selectedIncidentIdRef.current}?limit=10`).catch(() => null)
+        : Promise.resolve(null);
+      const [q, u, c, m, h, rq, inbox, feed, channel] = await Promise.all([
         fetchJson<{ incidents: IncidentSummary[] }>("/api/v1/dispatch/queue"),
         fetchJson<{ units: UnitSummary[] }>("/api/v1/dispatch/units"),
         fetchJson<any>("/api/v1/command/overview"),
@@ -260,6 +290,7 @@ export default function App() {
         fetchJson<ReviewQueue>("/api/v1/reporting/review-queue"),
         inboxPromise,
         feedPromise,
+        channelPromise,
       ]);
       setQueue(q.incidents);
       setUnits(u.units);
@@ -269,6 +300,7 @@ export default function App() {
       setReviewQueue(rq);
       setMessageInbox(inbox);
       setOfficerFeed(feed);
+      setIncidentChannel(channel);
       if (!selectedIncidentIdRef.current && q.incidents.length > 0) setSelectedIncidentId(q.incidents[0].incident_id);
       if (!statusUnitIdRef.current && u.units.length > 0) setStatusUnitId(u.units[0].unit_id);
     } catch (error) {
@@ -353,6 +385,7 @@ export default function App() {
   useEffect(() => {
     if (!selectedIncident) return;
     setReportNarrative(`Incident ${selectedIncident.incident_id}: ${selectedIncident.call_type} at ${selectedIncident.address}.`);
+    setChannelIncidentId(selectedIncident.incident_id);
   }, [selectedIncident?.incident_id]);
 
   useEffect(() => {
@@ -768,18 +801,25 @@ export default function App() {
     if (!statusUnitId || !messageTarget || !messageBody.trim()) return;
     setLoading(true);
     try {
+      const incidentId = sendToIncidentChannel ? (channelIncidentId || selectedIncident?.incident_id || null) : null;
       await fetchJson("/api/v1/officer/message", {
         method: "POST",
         body: JSON.stringify({
           from_unit: statusUnitId,
           to_unit: messageTarget,
           body: messageBody.trim(),
+          incident_id: incidentId,
+          priority: messagePriority,
         }),
       });
       setMessageBody("");
-      setMessageStatus(`Message sent to ${messageTarget}.`);
-      const inbox = await fetchJson<MessageInbox>(`/api/v1/officer/messages/${statusUnitId}?limit=12`);
+      setMessageStatus(`Message sent to ${messageTarget}${incidentId ? ` on ${incidentId}` : ""}.`);
+      const [inbox, channel] = await Promise.all([
+        fetchJson<MessageInbox>(`/api/v1/officer/messages/${statusUnitId}?limit=12`),
+        incidentId ? fetchJson<IncidentChannel>(`/api/v1/officer/channel/${incidentId}?limit=10`) : Promise.resolve(null),
+      ]);
       setMessageInbox(inbox);
+      if (channel) setIncidentChannel(channel);
     } catch (error) {
       setBanner(`Secure message failed: ${(error as Error).message}`);
     } finally {
@@ -1228,19 +1268,43 @@ export default function App() {
             <p className="section-subtitle">Unit {statusUnitId} · Inbox {messageInbox?.message_count ?? 0}</p>
             <div className="dispatch-form-grid">
               <label className="form-field">To<input value={messageTarget} onChange={(e) => setMessageTarget(e.target.value)} placeholder="DISPATCH or unit id" /></label>
+              <label className="form-field">Priority<select value={messagePriority} onChange={(e) => setMessagePriority(e.target.value)}><option value="NORMAL">NORMAL</option><option value="HIGH">HIGH</option><option value="URGENT">URGENT</option></select></label>
+              <label className="form-field">Incident Channel<input value={channelIncidentId} onChange={(e) => setChannelIncidentId(e.target.value)} placeholder="INC-..." /></label>
               <label className="form-field">Unread Estimate<input value={String(messageInbox?.unread_estimate ?? 0)} readOnly /></label>
               <label className="form-field wide">Message<textarea value={messageBody} onChange={(e) => setMessageBody(e.target.value)} placeholder="Short tactical update..." /></label>
             </div>
+            <div className="toggle-row">
+              <label><input type="checkbox" checked={sendToIncidentChannel} onChange={(e) => setSendToIncidentChannel(e.target.checked)} /> Tag to incident channel</label>
+            </div>
             <div className="dev-actions"><button type="button" onClick={handleSendMessage} disabled={loading || !messageBody.trim()}>Send Secure Message</button></div>
             {messageStatus ? <div className="dispatch-banner">{messageStatus}</div> : null}
-            <div className="timeline-list">
-              {(messageInbox?.messages ?? []).slice(0, 5).map((message) => (
-                <div key={message.message_id} className="timeline-item">
-                  <strong>{message.from_unit} {"->"} {message.to_unit}</strong>
-                  <p>{message.sent_at}</p>
-                  <p>{message.body}</p>
+            <div className="hub-grid">
+              <div className="hub-col">
+                <h3>Inbox</h3>
+                <div className="timeline-list">
+                  {(messageInbox?.messages ?? []).slice(0, 5).map((message) => (
+                    <div key={message.message_id} className="timeline-item">
+                      <strong>{message.from_unit} {"->"} {message.to_unit}</strong>
+                      <p>{message.sent_at}</p>
+                      <p>{message.priority ?? "NORMAL"} {message.incident_id ? `· ${message.incident_id}` : ""}</p>
+                      <p>{message.body}</p>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              </div>
+              <div className="hub-col">
+                <h3>Incident Channel {incidentChannel?.incident_id ?? ""}</h3>
+                <div className="timeline-list">
+                  {(incidentChannel?.messages ?? []).slice(0, 5).map((message) => (
+                    <div key={`channel-${message.message_id}`} className="timeline-item">
+                      <strong>{message.from_unit}</strong>
+                      <p>{message.sent_at}</p>
+                      <p>{message.priority ?? "NORMAL"}</p>
+                      <p>{message.body}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </article>
           ) : null}

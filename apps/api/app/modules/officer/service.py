@@ -20,6 +20,8 @@ class SecureMessage(BaseModel):
     from_unit: str
     to_unit: str
     body: str
+    incident_id: str | None = None
+    priority: str = "NORMAL"
 
 
 def active_calls_for_unit(unit_id: str) -> dict:
@@ -65,11 +67,18 @@ def submit_action(payload: OfficerAction) -> dict:
 
 
 def post_message(payload: SecureMessage) -> dict:
-    message = state.add_message(payload.from_unit, payload.to_unit, payload.body)
+    message = state.add_message(
+        payload.from_unit,
+        payload.to_unit,
+        payload.body,
+        incident_id=payload.incident_id,
+        priority=payload.priority,
+    )
     return {
         "ok": True,
         "delivered": True,
         "message_id": message["message_id"],
+        "incident_id": message.get("incident_id"),
         "sent_at": message["sent_at"],
     }
 
@@ -85,5 +94,14 @@ def message_inbox(unit_id: str, limit: int = 40) -> dict:
         "unit_id": unit_id,
         "message_count": len(messages),
         "unread_estimate": len(unread),
+        "messages": messages,
+    }
+
+
+def incident_channel(incident_id: str, limit: int = 40) -> dict:
+    messages = state.list_messages_for_incident(incident_id, limit=limit)
+    return {
+        "incident_id": incident_id,
+        "message_count": len(messages),
         "messages": messages,
     }

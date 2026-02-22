@@ -75,14 +75,21 @@ def test_intake_dispatch_reporting_flow() -> None:
             "from_unit": assignment_payload["recommended_unit_id"],
             "to_unit": "DISPATCH",
             "body": "Arrived on scene, requesting records check.",
+            "incident_id": incident_id,
+            "priority": "HIGH",
         },
     )
     assert message_response.status_code == 200
     assert message_response.json()["delivered"] is True
+    assert message_response.json()["incident_id"] == incident_id
 
     inbox_response = client.get(f"/api/v1/officer/messages/{assignment_payload['recommended_unit_id']}")
     assert inbox_response.status_code == 200
     assert inbox_response.json()["message_count"] >= 1
+
+    channel_response = client.get(f"/api/v1/officer/channel/{incident_id}")
+    assert channel_response.status_code == 200
+    assert channel_response.json()["message_count"] >= 1
 
     ai_response = client.post(
         "/api/v1/ai/incident",
