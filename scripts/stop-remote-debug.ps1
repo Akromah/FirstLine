@@ -8,10 +8,10 @@ function Stop-ListenersOnPort {
   param([int]$Port)
   $connections = Get-NetTCPConnection -State Listen -LocalPort $Port
   if (-not $connections) { return }
-  $pids = $connections | Select-Object -ExpandProperty OwningProcess -Unique
-  foreach ($pid in $pids) {
-    if ($pid -gt 0 -and $pid -ne $PID) {
-      Stop-Process -Id $pid -Force
+  $processIds = $connections | Select-Object -ExpandProperty OwningProcess -Unique
+  foreach ($processId in $processIds) {
+    if ($processId -gt 0 -and $processId -ne $PID) {
+      Stop-Process -Id $processId -Force
     }
   }
 }
@@ -25,8 +25,8 @@ if (Test-Path $sessionPath) {
     $session.pids.api_tunnel,
     $session.pids.web_process
   ) | Where-Object { $_ }
-  foreach ($pid in $pidValues) {
-    Stop-Process -Id ([int]$pid) -Force
+  foreach ($processId in $pidValues) {
+    Stop-Process -Id ([int]$processId) -Force
   }
   Remove-Item $sessionPath -Force
 }

@@ -10,6 +10,8 @@ dist/
 # Env
 .env
 .env.*
+.firstline-*
+.remote-logs/
 
 # IDE
 .vscode/

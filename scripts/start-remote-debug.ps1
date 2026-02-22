@@ -37,10 +37,10 @@ function Stop-ListenersOnPort {
   param([int]$Port)
   $connections = Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue
   if (-not $connections) { return }
-  $pids = $connections | Select-Object -ExpandProperty OwningProcess -Unique
-  foreach ($pid in $pids) {
-    if ($pid -gt 0 -and $pid -ne $PID) {
-      Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+  $processIds = $connections | Select-Object -ExpandProperty OwningProcess -Unique
+  foreach ($processId in $processIds) {
+    if ($processId -gt 0 -and $processId -ne $PID) {
+      Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
     }
   }
 }
@@ -62,18 +62,22 @@ function Wait-HttpUp {
   throw "Timed out waiting for $Url"
 }
 
-function Wait-NgrokPublicUrl {
+function Wait-NgrokTunnelUrls {
   param(
-    [int]$ApiPort,
+    [int]$ApiPort = 4040,
     [int]$TimeoutSec = 45
   )
   $deadline = (Get-Date).AddSeconds($TimeoutSec)
   while ((Get-Date) -lt $deadline) {
     try {
       $response = Invoke-RestMethod -Uri "http://127.0.0.1:$ApiPort/api/tunnels" -TimeoutSec 4
-      $httpsTunnel = $response.tunnels | Where-Object { $_.proto -eq "https" } | Select-Object -First 1
-      if ($httpsTunnel -and $httpsTunnel.public_url) {
-        return [string]$httpsTunnel.public_url
+      $webTunnel = $response.tunnels | Where-Object { $_.proto -eq "https" -and $_.config.addr -match "5173$" } | Select-Object -First 1
+      $apiTunnel = $response.tunnels | Where-Object { $_.proto -eq "https" -and $_.config.addr -match "4000$" } | Select-Object -First 1
+      if ($webTunnel -and $apiTunnel -and $webTunnel.public_url -and $apiTunnel.public_url) {
+        return @{
+          web_public_url = [string]$webTunnel.public_url
+          api_public_url = [string]$apiTunnel.public_url
+        }
       }
     } catch {
       Start-Sleep -Seconds 1
@@ -81,7 +85,7 @@ function Wait-NgrokPublicUrl {
     }
     Start-Sleep -Seconds 1
   }
-  throw "Timed out waiting for ngrok tunnel on 127.0.0.1:$ApiPort"
+  throw "Timed out waiting for ngrok tunnels on 127.0.0.1:$ApiPort"
 }
 
 function Require-Command {
@@ -97,9 +101,21 @@ function Require-Command {
 
 $ngrokExe = Require-Command "ngrok"
 if (-not $ngrokExe) {
+  $knownNgrokPath = Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Packages\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe\ngrok.exe"
+  if (Test-Path $knownNgrokPath) {
+    $ngrokExe = $knownNgrokPath
+  }
+}
+if (-not $ngrokExe) {
   if ($InstallNgrokIfMissing) {
     winget install ngrok.ngrok --silent --accept-package-agreements --accept-source-agreements | Out-Null
     $ngrokExe = Require-Command "ngrok"
+    if (-not $ngrokExe) {
+      $knownNgrokPath = Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Packages\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe\ngrok.exe"
+      if (Test-Path $knownNgrokPath) {
+        $ngrokExe = $knownNgrokPath
+      }
+    }
   }
 }
 if (-not $ngrokExe) {
@@ -117,6 +133,7 @@ $apiPython = Join-Path $apiDir ".venv\Scripts\python.exe"
 $apiEnvPath = Join-Path $apiDir ".env"
 $webEnvPath = Join-Path $webDir ".env"
 $sessionPath = Join-Path $ProjectRoot ".firstline-remote-session.json"
+$ngrokConfigPath = Join-Path $ProjectRoot ".firstline-ngrok.yml"
 
 if (-not (Test-Path $apiPython)) {
   throw "API venv not found at $apiPython. Create it first: cd apps\api; python -m venv .venv; .\.venv\Scripts\pip install -e ."
@@ -140,23 +157,32 @@ Stop-ListenersOnPort -Port 5173
 Stop-ListenersOnPort -Port 4040
 Stop-ListenersOnPort -Port 4041
 
-Write-Host "Starting ngrok tunnel for web (port 5173)..."
-$webTunnelProc = Start-Process -FilePath $ngrokExe -ArgumentList @("http", "5173", "--web-addr=127.0.0.1:4040") -PassThru
-$webPublicUrl = Wait-NgrokPublicUrl -ApiPort 4040
+$ngrokConfig = @"
+version: "2"
+tunnels:
+  web:
+    proto: http
+    addr: 5173
+  api:
+    proto: http
+    addr: 4000
+"@
+Set-Content -Path $ngrokConfigPath -Value $ngrokConfig -Encoding ascii
+
+Write-Host "Starting ngrok tunnels for web/api..."
+$ngrokProc = Start-Process -FilePath $ngrokExe -ArgumentList @("start", "--all", "--config", $ngrokConfigPath) -PassThru
+$tunnels = Wait-NgrokTunnelUrls -ApiPort 4040 -TimeoutSec 60
+$webPublicUrl = $tunnels.web_public_url
+$apiPublicUrl = $tunnels.api_public_url
 
 $corsJson = "[`"http://localhost:5173`",`"http://127.0.0.1:5173`",`"$webPublicUrl`"]"
 Set-EnvValue -Path $apiEnvPath -Key "CORS_ORIGINS" -Value $corsJson
+Set-EnvValue -Path $webEnvPath -Key "VITE_API_BASE_URL" -Value $apiPublicUrl
+Set-EnvValue -Path $webEnvPath -Key "VITE_MAP_STYLE_URL" -Value "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
 
 Write-Host "Starting API on port 4000..."
 $apiProc = Start-Process -FilePath $apiPython -WorkingDirectory $apiDir -ArgumentList @("-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "4000", "--reload") -PassThru
 Wait-HttpUp -Url "http://127.0.0.1:4000/health" -TimeoutSec 70
-
-Write-Host "Starting ngrok tunnel for API (port 4000)..."
-$apiTunnelProc = Start-Process -FilePath $ngrokExe -ArgumentList @("http", "4000", "--web-addr=127.0.0.1:4041") -PassThru
-$apiPublicUrl = Wait-NgrokPublicUrl -ApiPort 4041
-
-Set-EnvValue -Path $webEnvPath -Key "VITE_API_BASE_URL" -Value $apiPublicUrl
-Set-EnvValue -Path $webEnvPath -Key "VITE_MAP_STYLE_URL" -Value "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
 
 Write-Host "Starting web dev server on port 5173..."
 $webProc = Start-Process -FilePath $npmCmd -WorkingDirectory $webDir -ArgumentList @("run", "dev", "--", "--host", "0.0.0.0", "--port", "5173") -PassThru
@@ -168,9 +194,9 @@ $session = [ordered]@{
   web_public_url = $webPublicUrl
   api_public_url = $apiPublicUrl
   pids = @{
-    web_tunnel = $webTunnelProc.Id
+    web_tunnel = $ngrokProc.Id
     api_process = $apiProc.Id
-    api_tunnel = $apiTunnelProc.Id
+    api_tunnel = $ngrokProc.Id
     web_process = $webProc.Id
   }
 }
