@@ -956,10 +956,14 @@ export default function App() {
     const beatSourceId = "firstline-beats";
     const beatFillLayerId = "firstline-beat-fill";
     const beatLineLayerId = "firstline-beat-line";
+    const beatLabelSourceId = "firstline-beat-labels";
+    const beatLabelLayerId = "firstline-beat-labels-layer";
 
     const removeBeatLayers = () => {
+      if (map.getLayer(beatLabelLayerId)) map.removeLayer(beatLabelLayerId);
       if (map.getLayer(beatLineLayerId)) map.removeLayer(beatLineLayerId);
       if (map.getLayer(beatFillLayerId)) map.removeLayer(beatFillLayerId);
+      if (map.getSource(beatLabelSourceId)) map.removeSource(beatLabelSourceId);
       if (map.getSource(beatSourceId)) map.removeSource(beatSourceId);
     };
 
@@ -980,10 +984,44 @@ export default function App() {
           };
         }),
       };
+      const beatLabelGeoJson = {
+        type: "FeatureCollection",
+        features: mapData.beats.map((beat) => ({
+          type: "Feature",
+          properties: { label: beat.label },
+          geometry: { type: "Point", coordinates: [beat.center.lon, beat.center.lat] },
+        })),
+      };
 
       const existingSource = map.getSource(beatSourceId) as any;
+      const existingLabelSource = map.getSource(beatLabelSourceId) as any;
       if (existingSource?.setData) {
         existingSource.setData(beatGeoJson as any);
+        if (existingLabelSource?.setData) {
+          existingLabelSource.setData(beatLabelGeoJson as any);
+        } else {
+          map.addSource(beatLabelSourceId, {
+            type: "geojson",
+            data: beatLabelGeoJson as any,
+          });
+          if (!map.getLayer(beatLabelLayerId)) {
+            map.addLayer({
+              id: beatLabelLayerId,
+              type: "symbol",
+              source: beatLabelSourceId,
+              layout: {
+                "text-field": ["get", "label"],
+                "text-size": 12,
+                "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+              },
+              paint: {
+                "text-color": "#d9ecff",
+                "text-halo-color": "#0a1a2d",
+                "text-halo-width": 1.2,
+              },
+            });
+          }
+        }
       } else {
         removeBeatLayers();
         map.addSource(beatSourceId, {
@@ -995,8 +1033,8 @@ export default function App() {
           type: "fill",
           source: beatSourceId,
           paint: {
-            "fill-color": "#4f8dff",
-            "fill-opacity": 0.14,
+            "fill-color": "#0f5a91",
+            "fill-opacity": 0.06,
           },
         });
         map.addLayer({
@@ -1004,9 +1042,28 @@ export default function App() {
           type: "line",
           source: beatSourceId,
           paint: {
-            "line-color": "#8fb4ff",
-            "line-width": 2,
-            "line-opacity": 0.7,
+            "line-color": "#54d0ff",
+            "line-width": 3,
+            "line-opacity": 0.95,
+          },
+        });
+        map.addSource(beatLabelSourceId, {
+          type: "geojson",
+          data: beatLabelGeoJson as any,
+        });
+        map.addLayer({
+          id: beatLabelLayerId,
+          type: "symbol",
+          source: beatLabelSourceId,
+          layout: {
+            "text-field": ["get", "label"],
+            "text-size": 12,
+            "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+          },
+          paint: {
+            "text-color": "#d9ecff",
+            "text-halo-color": "#0a1a2d",
+            "text-halo-width": 1.2,
           },
         });
       }
