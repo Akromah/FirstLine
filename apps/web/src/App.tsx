@@ -201,9 +201,20 @@ export default function App() {
   const [incidentDetail, setIncidentDetail] = useState<IncidentDetail | null>(null);
 
   const [selectedIncidentId, setSelectedIncidentId] = useState("");
+  const [queueStatusFilter, setQueueStatusFilter] = useState("ALL");
+  const [queuePriorityFloor, setQueuePriorityFloor] = useState(0);
   const selectedIncident = useMemo(
     () => queue.find((item) => item.incident_id === selectedIncidentId) ?? queue[0],
     [queue, selectedIncidentId]
+  );
+  const filteredQueue = useMemo(
+    () =>
+      queue.filter((item) => {
+        const statusMatch = queueStatusFilter === "ALL" || item.status === queueStatusFilter;
+        const priorityMatch = item.priority >= queuePriorityFloor;
+        return statusMatch && priorityMatch;
+      }),
+    [queue, queueStatusFilter, queuePriorityFloor]
   );
 
   const [requiredSkills, setRequiredSkills] = useState("Crisis");
@@ -1267,12 +1278,17 @@ export default function App() {
           {(showDispatch || showField || showReport) ? (
           <article className="card panel">
             <h2>Active Queue</h2>
-            {queue.map((incident) => (
+            <div className="dispatch-form-grid">
+              <label className="form-field">Status Filter<select value={queueStatusFilter} onChange={(e) => setQueueStatusFilter(e.target.value)}><option value="ALL">ALL</option><option value="NEW">NEW</option><option value="DISPATCHED">DISPATCHED</option><option value="EN_ROUTE">EN_ROUTE</option><option value="ON_SCENE">ON_SCENE</option><option value="TRANSPORT">TRANSPORT</option><option value="CLOSED">CLOSED</option></select></label>
+              <label className="form-field">Min Priority<input type="number" min={0} max={100} value={queuePriorityFloor} onChange={(e) => setQueuePriorityFloor(Number(e.target.value) || 0)} /></label>
+            </div>
+            {filteredQueue.map((incident) => (
               <button key={incident.incident_id} type="button" className="list-row" onClick={() => setSelectedIncidentId(incident.incident_id)}>
                 <div><strong>{incident.incident_id} - {incident.call_type}</strong><p>{incident.address}</p></div>
                 <div className="queue-meta"><span className="badge">P{incident.priority}</span><span className="badge soft">{incident.status}</span></div>
               </button>
             ))}
+            {filteredQueue.length === 0 ? <div className="dispatch-banner">No incidents match current filters.</div> : null}
           </article>
           ) : null}
           {(showDispatch || showField) ? (
