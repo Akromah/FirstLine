@@ -204,6 +204,7 @@ export default function App() {
   const [sessionRole, setSessionRole] = useState("Dispatcher");
   const [viewMode, setViewMode] = useState<ViewMode>("Dispatch");
   const [activeModule, setActiveModule] = useState<ModulePanel>("queue");
+  const [moduleSearch, setModuleSearch] = useState("");
   const [loading, setLoading] = useState(false);
   const [banner, setBanner] = useState("Console initialized.");
 
@@ -316,6 +317,7 @@ export default function App() {
       if (typeof prefs.sessionRole === "string") setSessionRole(prefs.sessionRole);
       if (typeof prefs.viewMode === "string") setViewMode(prefs.viewMode as ViewMode);
       if (typeof prefs.statusUnitId === "string") setStatusUnitId(prefs.statusUnitId);
+      if (typeof prefs.activeModule === "string") setActiveModule(prefs.activeModule as ModulePanel);
       if (typeof prefs.showMapUnits === "boolean") setShowMapUnits(prefs.showMapUnits);
       if (typeof prefs.showMapIncidents === "boolean") setShowMapIncidents(prefs.showMapIncidents);
       if (typeof prefs.autoSaveEnabled === "boolean") setAutoSaveEnabled(prefs.autoSaveEnabled);
@@ -332,6 +334,7 @@ export default function App() {
           sessionRole,
           viewMode,
           statusUnitId,
+          activeModule,
           showMapUnits,
           showMapIncidents,
           autoSaveEnabled,
@@ -340,7 +343,7 @@ export default function App() {
     } catch {
       // Ignore storage write failures.
     }
-  }, [sessionRole, viewMode, statusUnitId, showMapUnits, showMapIncidents, autoSaveEnabled]);
+  }, [sessionRole, viewMode, statusUnitId, activeModule, showMapUnits, showMapIncidents, autoSaveEnabled]);
 
   useEffect(() => {
     selectedIncidentIdRef.current = selectedIncidentId;
@@ -1256,6 +1259,9 @@ export default function App() {
     "hotkeys",
   ];
   const rightColumnActive = rightColumnModules.includes(activeModule);
+  const visibleModuleButtons = moduleButtons.filter(
+    (item) => item.visible && item.label.toLowerCase().includes(moduleSearch.trim().toLowerCase())
+  );
 
   useEffect(() => {
     const visibleModules = moduleButtons.filter((item) => item.visible).map((item) => item.id);
@@ -1308,7 +1314,13 @@ export default function App() {
       </div>
 
       <section className="module-dock">
-        {moduleButtons.filter((item) => item.visible).map((item) => (
+        <input
+          className="module-search"
+          value={moduleSearch}
+          onChange={(e) => setModuleSearch(e.target.value)}
+          placeholder="Find module..."
+        />
+        {visibleModuleButtons.map((item) => (
           <button
             key={item.id}
             type="button"
@@ -1319,6 +1331,7 @@ export default function App() {
             {typeof item.badge === "number" ? <span className="module-count">{item.badge}</span> : null}
           </button>
         ))}
+        {visibleModuleButtons.length === 0 ? <span className="chip">No module matches filter.</span> : null}
       </section>
 
       <main className={`layout ${rightColumnActive ? "" : "map-focus"}`.trim()}>

@@ -108,6 +108,22 @@ body {
   gap: 8px;
 }
 
+.module-search {
+  border: 1px solid #2d466a;
+  border-radius: 999px;
+  min-height: 34px;
+  padding: 0 12px;
+  background: #0b1728;
+  color: #edf4ff;
+  min-width: 180px;
+}
+
+.module-search:focus {
+  outline: 2px solid rgba(79, 141, 255, 0.35);
+  outline-offset: 1px;
+  border-color: #6a9eff;
+}
+
 .module-btn {
   border: 1px solid #c7d7ef;
   border-radius: 999px;
