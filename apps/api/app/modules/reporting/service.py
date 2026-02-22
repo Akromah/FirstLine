@@ -1,8 +1,48 @@
 from datetime import datetime, timezone
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 from app.core.state import state
+
+
+TEMPLATE_LIBRARY: list[dict[str, Any]] = [
+    {
+        "template_id": "DOMESTIC_RESPONSE",
+        "label": "Domestic Response",
+        "applies_to": ["domestic", "family"],
+        "sections": ["Initial Contact", "Statements", "Evidence", "Disposition"],
+        "default_fields": {"case_type": "Domestic", "victim_services_offered": "Yes"},
+    },
+    {
+        "template_id": "MENTAL_HEALTH_WELFARE",
+        "label": "Mental Health / Welfare Check",
+        "applies_to": ["mental", "welfare", "suicidal", "hallucination"],
+        "sections": ["Behavioral Indicators", "De-escalation Steps", "Medical Referral", "Disposition"],
+        "default_fields": {"case_type": "WelfareCheck", "5150_screening": "Pending"},
+    },
+    {
+        "template_id": "TRAFFIC_STOP",
+        "label": "Traffic Stop",
+        "applies_to": ["traffic", "dui", "vehicle"],
+        "sections": ["Vehicle Stop Context", "Driver Contact", "Citation/Arrest", "Disposition"],
+        "default_fields": {"case_type": "Traffic", "citation_review": "Pending"},
+    },
+    {
+        "template_id": "WARRANT_SERVICE",
+        "label": "Warrant Service",
+        "applies_to": ["warrant", "wanted", "fugitive"],
+        "sections": ["Service Location", "Subject Contact", "Safety Actions", "Booking Outcome"],
+        "default_fields": {"case_type": "Warrant", "booking_status": "Pending"},
+    },
+    {
+        "template_id": "GENERAL_INCIDENT",
+        "label": "General Incident",
+        "applies_to": [],
+        "sections": ["Scene Arrival", "Investigation", "Officer Actions", "Final Disposition"],
+        "default_fields": {"case_type": "General", "supervisor_review": "Pending"},
+    },
+]
 
 
 class ReportCreateRequest(BaseModel):
@@ -10,6 +50,8 @@ class ReportCreateRequest(BaseModel):
     unit_id: str
     narrative: str
     field_updates: dict[str, str] = Field(default_factory=dict)
+    template_id: str | None = None
+    dictation_metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ReportDraftRequest(BaseModel):
@@ -17,7 +59,97 @@ class ReportDraftRequest(BaseModel):
     unit_id: str
     narrative: str
     structured_fields: dict[str, str] = Field(default_factory=dict)
+    template_id: str | None = None
+    dictation_metadata: dict[str, Any] = Field(default_factory=dict)
     status: str = "DRAFT"
+
+
+class ReportTemplateApplyRequest(BaseModel):
+    incident_id: str
+    unit_id: str
+    template_id: str
+    include_timeline: bool = True
+
+
+def _find_template(template_id: str) -> dict[str, Any]:
+    normalized = template_id.strip().upper()
+    for item in TEMPLATE_LIBRARY:
+        if item["template_id"] == normalized:
+            return item
+    return next(item for item in TEMPLATE_LIBRARY if item["template_id"] == "GENERAL_INCIDENT")
+
+
+def get_report_templates(incident_id: str | None = None) -> dict:
+    incident = state.get_incident(incident_id) if incident_id else None
+    call_type = (incident["call_type"] if incident else "").lower()
+
+    templates: list[dict[str, Any]] = []
+    for item in TEMPLATE_LIBRARY:
+        applies_to = item["applies_to"]
+        recommended = bool(call_type and applies_to and any(token in call_type for token in applies_to))
+        templates.append(
+            {
+                "template_id": item["template_id"],
+                "label": item["label"],
+                "sections": item["sections"],
+                "default_fields": item["default_fields"],
+                "recommended": recommended,
+            }
+        )
+
+    if incident and not any(item["recommended"] for item in templates):
+        for item in templates:
+            if item["template_id"] == "GENERAL_INCIDENT":
+                item["recommended"] = True
+                break
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "incident_id": incident_id,
+        "incident_call_type": incident["call_type"] if incident else None,
+        "templates": templates,
+    }
+
+
+def apply_report_template(payload: ReportTemplateApplyRequest) -> dict | None:
+    incident = state.get_incident(payload.incident_id)
+    if not incident:
+        return None
+
+    template = _find_template(payload.template_id)
+    timeline_lines: list[str] = []
+    if payload.include_timeline:
+        for event in state.get_incident_timeline(payload.incident_id)[-4:]:
+            time_value = event.get("time", "unknown")
+            event_name = event.get("event", "event")
+            action = f" ({event.get('action')})" if event.get("action") else ""
+            timeline_lines.append(f"- {time_value}: {event_name}{action}")
+
+    section_block = "\n".join(f"{index + 1}. {section}: " for index, section in enumerate(template["sections"]))
+    timeline_block = "\n".join(timeline_lines) if timeline_lines else "- No timeline entries yet."
+
+    narrative = (
+        f"Incident {incident['incident_id']} ({incident['call_type']}) at {incident['address']}.\n"
+        f"Assigned unit: {payload.unit_id}. Priority: {incident['priority']}.\n\n"
+        "Recent CAD timeline:\n"
+        f"{timeline_block}\n\n"
+        f"{template['label']} narrative structure:\n"
+        f"{section_block}"
+    )
+
+    structured_fields = {
+        "template_id": template["template_id"],
+        "incident_status": incident["status"],
+        "incident_priority": str(incident["priority"]),
+        **template["default_fields"],
+    }
+
+    return {
+        "template_id": template["template_id"],
+        "template_label": template["label"],
+        "narrative": narrative,
+        "structured_fields": structured_fields,
+    }
 
 
 def build_rms_payload(payload: ReportCreateRequest) -> dict:
@@ -36,17 +168,24 @@ def build_rms_payload(payload: ReportCreateRequest) -> dict:
         unit_id=payload.unit_id,
         narrative=payload.narrative,
         structured_fields=payload.field_updates,
+        template_id=payload.template_id,
+        report_meta={"dictation": payload.dictation_metadata},
         status="SUBMITTED",
     )
+
+    warnings = [] if disposition else ["Disposition has not been finalized."]
+    if len(payload.narrative.strip()) < 80:
+        warnings.append("Narrative appears short and may need additional detail.")
 
     return {
         "incident_id": payload.incident_id,
         "unit_id": payload.unit_id,
         "report_id": draft["report_id"],
         "submission_status": "READY_FOR_REVIEW" if disposition else "DRAFT_INCOMPLETE",
-        "narrative_template": "Auto-generated from CAD timeline",
+        "narrative_template": payload.template_id or "Auto-generated from CAD timeline",
         "narrative": payload.narrative,
         "structured_fields": payload.field_updates,
+        "dictation_metadata": payload.dictation_metadata,
         "audit_trail": audit_trail,
         "incident_context": {
             "call_type": incident["call_type"] if incident else "Unknown",
@@ -57,7 +196,7 @@ def build_rms_payload(payload: ReportCreateRequest) -> dict:
         "validation": {
             "has_disposition": bool(disposition),
             "requires_supervisor_review": bool(disposition and disposition.get("requires_supervisor_review")),
-            "warnings": [] if disposition else ["Disposition has not been finalized."],
+            "warnings": warnings,
         },
         "evidence_links": [
             {"type": "photo", "uri": f"evidence://incidents/{payload.incident_id}/photo-1"},
@@ -71,6 +210,8 @@ def save_report_draft(payload: ReportDraftRequest) -> dict:
         unit_id=payload.unit_id,
         narrative=payload.narrative,
         structured_fields=payload.structured_fields,
+        template_id=payload.template_id,
+        report_meta={"dictation": payload.dictation_metadata},
         status=payload.status,
     )
 

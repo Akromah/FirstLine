@@ -415,6 +415,8 @@ class InMemoryState:
         unit_id: str,
         narrative: str,
         structured_fields: dict[str, str],
+        template_id: str | None = None,
+        report_meta: dict | None = None,
         status: str = "DRAFT",
     ) -> dict:
         with self._lock:
@@ -428,6 +430,8 @@ class InMemoryState:
             if existing:
                 existing["narrative"] = narrative
                 existing["structured_fields"] = structured_fields
+                existing["template_id"] = template_id
+                existing["report_meta"] = report_meta or existing.get("report_meta") or {}
                 existing["status"] = status
                 existing["updated_at"] = now
                 report_id = existing["report_id"]
@@ -439,6 +443,8 @@ class InMemoryState:
                     "unit_id": unit_id,
                     "narrative": narrative,
                     "structured_fields": structured_fields,
+                    "template_id": template_id,
+                    "report_meta": report_meta or {},
                     "status": status,
                     "created_at": now,
                     "updated_at": now,
@@ -591,6 +597,16 @@ class InMemoryState:
             }
             self._messages.append(message)
             return message.copy()
+
+    def list_messages_for_unit(self, unit_id: str, limit: int = 40) -> list[dict]:
+        with self._lock:
+            scoped = [
+                item.copy()
+                for item in self._messages
+                if item["to_unit"] == unit_id or item["from_unit"] == unit_id
+            ]
+            scoped.sort(key=lambda row: row["sent_at"], reverse=True)
+            return scoped[: max(1, min(limit, 200))]
 
     def build_command_snapshot(self) -> dict:
         with self._lock:

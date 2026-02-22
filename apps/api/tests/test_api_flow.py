@@ -69,6 +69,21 @@ def test_intake_dispatch_reporting_flow() -> None:
     assert officer_response.status_code == 200
     assert officer_response.json()["ok"] is True
 
+    message_response = client.post(
+        "/api/v1/officer/message",
+        json={
+            "from_unit": assignment_payload["recommended_unit_id"],
+            "to_unit": "DISPATCH",
+            "body": "Arrived on scene, requesting records check.",
+        },
+    )
+    assert message_response.status_code == 200
+    assert message_response.json()["delivered"] is True
+
+    inbox_response = client.get(f"/api/v1/officer/messages/{assignment_payload['recommended_unit_id']}")
+    assert inbox_response.status_code == 200
+    assert inbox_response.json()["message_count"] >= 1
+
     ai_response = client.post(
         "/api/v1/ai/incident",
         json={
@@ -94,12 +109,31 @@ def test_intake_dispatch_reporting_flow() -> None:
             "unit_id": assignment_payload["recommended_unit_id"],
             "narrative": "Initial report draft pending supervisor review.",
             "structured_fields": {"case_type": "Domestic"},
+            "template_id": "DOMESTIC_RESPONSE",
+            "dictation_metadata": {"segments": 2, "seconds": 34},
             "status": "DRAFT",
         },
     )
     assert draft_response.status_code == 200
     draft_payload = draft_response.json()
     report_id = draft_payload["report_id"]
+
+    template_response = client.get("/api/v1/reporting/templates", params={"incident_id": incident_id})
+    assert template_response.status_code == 200
+    template_payload = template_response.json()
+    assert any(item["template_id"] == "DOMESTIC_RESPONSE" for item in template_payload["templates"])
+
+    apply_template_response = client.post(
+        "/api/v1/reporting/template/apply",
+        json={
+            "incident_id": incident_id,
+            "unit_id": assignment_payload["recommended_unit_id"],
+            "template_id": "DOMESTIC_RESPONSE",
+            "include_timeline": True,
+        },
+    )
+    assert apply_template_response.status_code == 200
+    assert "Incident" in apply_template_response.json()["narrative"]
 
     hub_response = client.get("/api/v1/reporting/hub")
     assert hub_response.status_code == 200
@@ -113,6 +147,8 @@ def test_intake_dispatch_reporting_flow() -> None:
             "unit_id": assignment_payload["recommended_unit_id"],
             "narrative": "Unit arrived on scene and stabilized reporting parties.",
             "field_updates": {"disposition": "On-scene mediation"},
+            "template_id": "DOMESTIC_RESPONSE",
+            "dictation_metadata": {"segments": 4, "seconds": 81},
         },
     )
     assert reporting_response.status_code == 200
@@ -120,6 +156,18 @@ def test_intake_dispatch_reporting_flow() -> None:
     assert report_payload["incident_context"]["address"] == "901 Orange St, Redlands"
     assert any(event["event"] == "unit_assigned" for event in report_payload["audit_trail"])
     assert report_payload["validation"]["has_disposition"] is False
+
+    ai_report_response = client.post(
+        "/api/v1/ai/report",
+        json={
+            "incident_id": incident_id,
+            "unit_id": assignment_payload["recommended_unit_id"],
+            "narrative": "Separated parties and assessed injuries.",
+            "tone": "command",
+        },
+    )
+    assert ai_report_response.status_code == 200
+    assert "responded to" in ai_report_response.json()["improved_narrative"]
 
     fetch_draft_response = client.get(f"/api/v1/reporting/draft/{report_id}")
     assert fetch_draft_response.status_code == 200

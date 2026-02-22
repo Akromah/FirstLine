@@ -28,6 +28,36 @@ type AIAssist = {
   officer_safety_alerts: string[];
   confidence: number;
 };
+type ReportTemplate = {
+  template_id: string;
+  label: string;
+  sections: string[];
+  default_fields: Record<string, string>;
+  recommended: boolean;
+};
+type ReportTemplateCatalog = {
+  templates: ReportTemplate[];
+  incident_call_type?: string | null;
+};
+type MessageThread = {
+  message_id: string;
+  from_unit: string;
+  to_unit: string;
+  body: string;
+  sent_at: string;
+};
+type MessageInbox = {
+  unit_id: string;
+  message_count: number;
+  unread_estimate: number;
+  messages: MessageThread[];
+};
+type AIReportAssist = {
+  improved_narrative: string;
+  key_points: string[];
+  confidence: number;
+  tone: string;
+};
 
 type IncidentDetail = {
   incident: {
@@ -67,6 +97,10 @@ function parseFields(raw: string): Record<string, string> {
     out[k.trim()] = rest.join("=").trim();
   });
   return out;
+}
+
+function serializeFields(fields: Record<string, string>): string {
+  return Object.entries(fields).map(([k, v]) => `${k}=${v}`).join(";");
 }
 
 export default function App() {
@@ -113,10 +147,20 @@ export default function App() {
   const [reportNarrative, setReportNarrative] = useState("Initial narrative pending.");
   const [reportFields, setReportFields] = useState("case_type=Domestic;supervisor_review=Pending");
   const [reportSummary, setReportSummary] = useState("");
+  const [templateCatalog, setTemplateCatalog] = useState<ReportTemplateCatalog | null>(null);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("GENERAL_INCIDENT");
+  const [reportTone, setReportTone] = useState("professional");
+  const [reportAssist, setReportAssist] = useState<AIReportAssist | null>(null);
+  const [dictationSegments, setDictationSegments] = useState(0);
+  const [dictationSeconds, setDictationSeconds] = useState(0);
   const [dictationSupported, setDictationSupported] = useState(false);
   const [isDictating, setIsDictating] = useState(false);
   const [dictationStatus, setDictationStatus] = useState("Dictation idle.");
   const [dictationInterim, setDictationInterim] = useState("");
+  const [messageInbox, setMessageInbox] = useState<MessageInbox | null>(null);
+  const [messageTarget, setMessageTarget] = useState("DISPATCH");
+  const [messageBody, setMessageBody] = useState("");
+  const [messageStatus, setMessageStatus] = useState("");
 
   const [intelQuery, setIntelQuery] = useState("Brandon");
   const [lookup, setLookup] = useState<LookupResult | null>(null);
@@ -131,6 +175,7 @@ export default function App() {
   const selectedIncidentIdRef = useRef(selectedIncidentId);
   const statusUnitIdRef = useRef(statusUnitId);
   const dictationRef = useRef<any>(null);
+  const dictationStartRef = useRef<number | null>(null);
 
   useEffect(() => {
     selectedIncidentIdRef.current = selectedIncidentId;
@@ -141,6 +186,22 @@ export default function App() {
   }, [statusUnitId]);
 
   useEffect(() => {
+    async function loadInbox() {
+      if (!statusUnitId) {
+        setMessageInbox(null);
+        return;
+      }
+      try {
+        const inbox = await fetchJson<MessageInbox>(`/api/v1/officer/messages/${statusUnitId}?limit=12`);
+        setMessageInbox(inbox);
+      } catch {
+        setMessageInbox(null);
+      }
+    }
+    loadInbox();
+  }, [statusUnitId]);
+
+  useEffect(() => {
     if (sessionRole === "Officer") setViewMode("Field");
     if (sessionRole === "Supervisor") setViewMode("Dispatch");
     if (sessionRole === "Dispatcher") setViewMode("Dispatch");
@@ -148,18 +209,23 @@ export default function App() {
 
   async function refreshDashboard() {
     try {
-      const [q, u, c, m, h] = await Promise.all([
+      const inboxPromise = statusUnitIdRef.current
+        ? fetchJson<MessageInbox>(`/api/v1/officer/messages/${statusUnitIdRef.current}?limit=12`).catch(() => null)
+        : Promise.resolve(null);
+      const [q, u, c, m, h, inbox] = await Promise.all([
         fetchJson<{ incidents: IncidentSummary[] }>("/api/v1/dispatch/queue"),
         fetchJson<{ units: UnitSummary[] }>("/api/v1/dispatch/units"),
         fetchJson<any>("/api/v1/command/overview"),
         fetchJson<any>("/api/v1/map/overview"),
         fetchJson<ReportingHub>("/api/v1/reporting/hub"),
+        inboxPromise,
       ]);
       setQueue(q.incidents);
       setUnits(u.units);
       setCommand(c);
       setMapData(m);
       setReportHub(h);
+      setMessageInbox(inbox);
       if (!selectedIncidentIdRef.current && q.incidents.length > 0) setSelectedIncidentId(q.incidents[0].incident_id);
       if (!statusUnitIdRef.current && u.units.length > 0) setStatusUnitId(u.units[0].unit_id);
     } catch (error) {
@@ -251,6 +317,25 @@ export default function App() {
   }, [selectedIncident?.incident_id, queue.length]);
 
   useEffect(() => {
+    async function loadTemplates() {
+      if (!selectedIncident) {
+        setTemplateCatalog(null);
+        setSelectedTemplateId("GENERAL_INCIDENT");
+        return;
+      }
+      try {
+        const catalog = await fetchJson<ReportTemplateCatalog>(`/api/v1/reporting/templates?incident_id=${selectedIncident.incident_id}`);
+        setTemplateCatalog(catalog);
+        const recommended = catalog.templates.find((item) => item.recommended);
+        if (recommended) setSelectedTemplateId(recommended.template_id);
+      } catch {
+        setTemplateCatalog(null);
+      }
+    }
+    loadTemplates();
+  }, [selectedIncident?.incident_id]);
+
+  useEffect(() => {
     const speechCtor = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
     if (!speechCtor) {
       setDictationSupported(false);
@@ -275,6 +360,7 @@ export default function App() {
 
       if (finalTranscript.trim()) {
         setReportNarrative((prev) => `${prev.trim()} ${finalTranscript.trim()}`.trim());
+        setDictationSegments((prev) => prev + 1);
         setDictationStatus("Dictation captured.");
       } else if (interimTranscript.trim()) {
         setDictationStatus("Listening...");
@@ -289,8 +375,13 @@ export default function App() {
     };
 
     recognition.onend = () => {
+      if (dictationStartRef.current) {
+        const elapsed = Math.max(1, Math.round((Date.now() - dictationStartRef.current) / 1000));
+        setDictationSeconds((prev) => prev + elapsed);
+      }
       setIsDictating(false);
       setDictationInterim("");
+      dictationStartRef.current = null;
       setDictationStatus((current) => (current.startsWith("Dictation error") ? current : "Dictation stopped."));
     };
 
@@ -417,6 +508,8 @@ export default function App() {
           unit_id: statusUnitId,
           narrative: reportNarrative,
           structured_fields: parseFields(reportFields),
+          template_id: selectedTemplateId,
+          dictation_metadata: { segments: dictationSegments, seconds: dictationSeconds },
           status: "DRAFT",
         }),
       });
@@ -440,6 +533,8 @@ export default function App() {
           unit_id: statusUnitId,
           narrative: reportNarrative,
           field_updates: parseFields(reportFields),
+          template_id: selectedTemplateId,
+          dictation_metadata: { segments: dictationSegments, seconds: dictationSeconds },
         }),
       });
       const warnings = (payload.validation?.warnings ?? []).join(" ");
@@ -458,6 +553,7 @@ export default function App() {
     if (!dictationSupported || !dictationRef.current || isDictating) return;
     try {
       dictationRef.current.start();
+      dictationStartRef.current = Date.now();
       setIsDictating(true);
       setDictationInterim("");
       setDictationStatus("Listening...");
@@ -468,10 +564,85 @@ export default function App() {
 
   function handleStopDictation() {
     if (!dictationRef.current || !isDictating) return;
+    if (dictationStartRef.current) {
+      const elapsed = Math.max(1, Math.round((Date.now() - dictationStartRef.current) / 1000));
+      setDictationSeconds((prev) => prev + elapsed);
+      dictationStartRef.current = null;
+    }
     dictationRef.current.stop();
     setIsDictating(false);
     setDictationInterim("");
     setDictationStatus("Dictation stopped.");
+  }
+
+  async function handleApplyTemplate() {
+    if (!selectedIncident || !statusUnitId) return;
+    setLoading(true);
+    try {
+      const payload = await fetchJson<{ narrative: string; structured_fields: Record<string, string> }>("/api/v1/reporting/template/apply", {
+        method: "POST",
+        body: JSON.stringify({
+          incident_id: selectedIncident.incident_id,
+          unit_id: statusUnitId,
+          template_id: selectedTemplateId,
+          include_timeline: true,
+        }),
+      });
+      setReportNarrative(payload.narrative);
+      const merged = { ...payload.structured_fields, ...parseFields(reportFields) };
+      setReportFields(serializeFields(merged));
+      setReportSummary(`Applied template ${selectedTemplateId}.`);
+    } catch (error) {
+      setBanner(`Template apply failed: ${(error as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleAiReportAssist() {
+    if (!selectedIncident || !statusUnitId) return;
+    setLoading(true);
+    try {
+      const result = await fetchJson<AIReportAssist>("/api/v1/ai/report", {
+        method: "POST",
+        body: JSON.stringify({
+          incident_id: selectedIncident.incident_id,
+          unit_id: statusUnitId,
+          narrative: reportNarrative,
+          tone: reportTone,
+        }),
+      });
+      setReportAssist(result);
+      setReportNarrative(result.improved_narrative);
+      setReportSummary(`AI report assist ${Math.round(result.confidence * 100)}% confidence.`);
+    } catch (error) {
+      setBanner(`AI report assist failed: ${(error as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSendMessage() {
+    if (!statusUnitId || !messageTarget || !messageBody.trim()) return;
+    setLoading(true);
+    try {
+      await fetchJson("/api/v1/officer/message", {
+        method: "POST",
+        body: JSON.stringify({
+          from_unit: statusUnitId,
+          to_unit: messageTarget,
+          body: messageBody.trim(),
+        }),
+      });
+      setMessageBody("");
+      setMessageStatus(`Message sent to ${messageTarget}.`);
+      const inbox = await fetchJson<MessageInbox>(`/api/v1/officer/messages/${statusUnitId}?limit=12`);
+      setMessageInbox(inbox);
+    } catch (error) {
+      setBanner(`Secure message failed: ${(error as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function handleFinalizeDisposition() {
@@ -602,6 +773,7 @@ export default function App() {
 
       <main className="layout">
         <section className="main-column">
+          {showDispatch ? (
           <article className="card panel">
             <h2>Smart Call Intake</h2>
             <p className="section-subtitle">Structured intake with geolocation and AI-ready notes.</p>
@@ -617,12 +789,16 @@ export default function App() {
             </form>
             <div className="dispatch-banner">{banner}</div>
           </article>
+          ) : null}
 
+          {(showDispatch || showField) ? (
           <article className="card map-card">
             <div className="map-header"><h2>Unified Live Map</h2><p>Live unit status and incident priority overlays.</p></div>
             <div className="map-canvas"><div className="maplibre-map" ref={mapContainerRef} /></div>
           </article>
+          ) : null}
 
+          {(showDispatch || showField || showReport) ? (
           <article className="card panel">
             <h2>Active Queue</h2>
             {queue.map((incident) => (
@@ -632,6 +808,8 @@ export default function App() {
               </button>
             ))}
           </article>
+          ) : null}
+          {(showField || showDispatch) ? (
           <article className="card panel">
             <h2>Field Operations</h2>
             <p className="section-subtitle">
@@ -656,9 +834,40 @@ export default function App() {
               ))}
             </div>
           </article>
+          ) : null}
+          {(showReport || showField || showDispatch) ? (
           <article className="card panel">
             <h2>Report Writing Hub</h2>
             <p className="section-subtitle">Incident: <strong>{selectedIncident?.incident_id ?? "None selected"}</strong></p>
+            <div className="template-row">
+              <label className="form-field">
+                Template
+                <select value={selectedTemplateId} onChange={(e) => setSelectedTemplateId(e.target.value)}>
+                  {(templateCatalog?.templates ?? []).map((template) => (
+                    <option key={template.template_id} value={template.template_id}>
+                      {template.label}{template.recommended ? " (Recommended)" : ""}
+                    </option>
+                  ))}
+                  {(templateCatalog?.templates ?? []).length === 0 ? <option value="GENERAL_INCIDENT">General Incident</option> : null}
+                </select>
+              </label>
+              <label className="form-field">
+                AI Tone
+                <select value={reportTone} onChange={(e) => setReportTone(e.target.value)}>
+                  <option value="professional">Professional</option>
+                  <option value="command">Command</option>
+                  <option value="plain">Plain</option>
+                </select>
+              </label>
+            </div>
+            <div className="button-grid">
+              <button type="button" onClick={handleApplyTemplate} disabled={loading || !selectedIncident}>
+                Apply Template
+              </button>
+              <button type="button" onClick={handleAiReportAssist} disabled={loading || !selectedIncident}>
+                AI Refine Narrative
+              </button>
+            </div>
             <div className="dictation-controls">
               <div className="dictation-row">
                 <button type="button" onClick={handleStartDictation} disabled={loading || !dictationSupported || isDictating}>
@@ -669,6 +878,7 @@ export default function App() {
                 </button>
               </div>
               <div className={`dictation-status ${isDictating ? "live" : ""}`}>{dictationStatus}</div>
+              <div className="dictation-preview">Segments: {dictationSegments} · Total capture: {dictationSeconds}s</div>
               {dictationInterim ? <div className="dictation-preview">{dictationInterim}</div> : null}
             </div>
             <div className="dispatch-form-grid">
@@ -685,6 +895,7 @@ export default function App() {
               <div className="dispatch-banner">Finalize disposition before final RMS submission.</div>
             ) : null}
             {reportSummary ? <div className="dispatch-banner">{reportSummary}</div> : null}
+            {reportAssist ? <div className="ai-box"><p>{reportAssist.improved_narrative}</p><p>Key points: {reportAssist.key_points.join(" | ")}</p></div> : null}
             <div className="hub-grid">
               <div className="hub-col">
                 <h3>Drafts</h3>
@@ -700,7 +911,9 @@ export default function App() {
               </div>
             </div>
           </article>
+          ) : null}
 
+          {(showIntel || showField) ? (
           <article className="card panel">
             <h2>Records and Warrants Hub</h2>
             <div className="search-row">
@@ -725,9 +938,11 @@ export default function App() {
             </div>
             {profile ? <div className="profile-card"><strong>Profile - {profile.person.full_name} ({profile.person.person_id})</strong><p>Address: {profile.person.address}</p><p>Safety flags: {profile.officer_safety_flags.join(", ") || "None"}</p></div> : null}
           </article>
+          ) : null}
         </section>
 
         <aside className="right-column">
+          {(showDispatch || showReport) ? (
           <article className="card panel">
             <h2>Command Dashboard</h2>
             <div className="kpi-grid">
@@ -737,7 +952,9 @@ export default function App() {
               <div className="kpi"><span>Avg ETA</span><strong>{command?.average_response_minutes ?? 0}m</strong></div>
             </div>
           </article>
+          ) : null}
 
+          {(showDispatch || showReport) ? (
           <article className="card panel">
             <h2>AI Operations Engine</h2>
             <p className="section-subtitle">Incident: {selectedIncident?.incident_id ?? "None selected"}</p>
@@ -745,7 +962,9 @@ export default function App() {
             <div className="dev-actions"><button type="button" onClick={handleAiAssist} disabled={loading}>Generate AI Assist</button></div>
             {aiAssist ? <div className="ai-box"><p>{aiAssist.summary}</p><p>Recommendation: <strong>{aiAssist.recommended_disposition_code}</strong></p><p>Next actions: {aiAssist.next_actions.join(" | ")}</p><p>Safety alerts: {aiAssist.officer_safety_alerts.join(" | ") || "None"}</p></div> : null}
           </article>
+          ) : null}
 
+          {showDispatch ? (
           <article className="card panel">
             <h2>Recommendation Engine</h2>
             <p className="section-subtitle">Selected incident: <strong>{selectedIncident?.incident_id ?? "None"}</strong></p>
@@ -757,7 +976,9 @@ export default function App() {
             {recommendation ? <div className="dispatch-banner">{recommendation.recommendation.callsign} ({recommendation.recommendation.recommended_unit_id}) - ETA {recommendation.recommendation.predicted_eta_minutes}m - Fallbacks: {recommendation.fallback_unit_ids.join(", ") || "none"}</div> : null}
             {assignment ? <div className="dispatch-banner">Assigned {assignment.callsign}. Confidence {Math.round(assignment.confidence * 100)}%.</div> : null}
           </article>
+          ) : null}
 
+          {(showDispatch || showField || showReport) ? (
           <article className="card panel">
             <h2>Call Disposition</h2>
             <div className="dispatch-form-grid">
@@ -772,7 +993,9 @@ export default function App() {
             </div>
             <div className="dev-actions"><button type="button" onClick={handleFinalizeDisposition} disabled={loading}>Finalize Disposition</button></div>
           </article>
+          ) : null}
 
+          {showField ? (
           <article className="card panel">
             <h2>Mobile Officer Controls</h2>
             <div className="dispatch-form-grid">
@@ -787,8 +1010,40 @@ export default function App() {
               <button type="button" onClick={() => handleOfficerAction("CLEAR")} disabled={loading}>Clear Call</button>
             </div>
           </article>
+          ) : null}
+
+          {(showField || showDispatch) ? (
+          <article className="card panel">
+            <h2>Secure Messaging</h2>
+            <p className="section-subtitle">Unit {statusUnitId} · Inbox {messageInbox?.message_count ?? 0}</p>
+            <div className="dispatch-form-grid">
+              <label className="form-field">To<input value={messageTarget} onChange={(e) => setMessageTarget(e.target.value)} placeholder="DISPATCH or unit id" /></label>
+              <label className="form-field">Unread Estimate<input value={String(messageInbox?.unread_estimate ?? 0)} readOnly /></label>
+              <label className="form-field wide">Message<textarea value={messageBody} onChange={(e) => setMessageBody(e.target.value)} placeholder="Short tactical update..." /></label>
+            </div>
+            <div className="dev-actions"><button type="button" onClick={handleSendMessage} disabled={loading || !messageBody.trim()}>Send Secure Message</button></div>
+            {messageStatus ? <div className="dispatch-banner">{messageStatus}</div> : null}
+            <div className="timeline-list">
+              {(messageInbox?.messages ?? []).slice(0, 5).map((message) => (
+                <div key={message.message_id} className="timeline-item">
+                  <strong>{message.from_unit} {"->"} {message.to_unit}</strong>
+                  <p>{message.sent_at}</p>
+                  <p>{message.body}</p>
+                </div>
+              ))}
+            </div>
+          </article>
+          ) : null}
         </aside>
       </main>
+
+      <nav className="bottom-nav">
+        {(["Dispatch", "Field", "Report", "Intel"] as ViewMode[]).map((mode) => (
+          <button key={mode} type="button" className={viewMode === mode ? "active" : ""} onClick={() => setViewMode(mode)}>
+            {mode}
+          </button>
+        ))}
+      </nav>
     </div>
   );
 }

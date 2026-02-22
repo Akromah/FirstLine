@@ -72,3 +72,18 @@ def post_message(payload: SecureMessage) -> dict:
         "message_id": message["message_id"],
         "sent_at": message["sent_at"],
     }
+
+
+def message_inbox(unit_id: str, limit: int = 40) -> dict:
+    messages = state.list_messages_for_unit(unit_id, limit=limit)
+    unread = [
+        item
+        for item in messages
+        if item["to_unit"] == unit_id and item["from_unit"] != unit_id
+    ]
+    return {
+        "unit_id": unit_id,
+        "message_count": len(messages),
+        "unread_estimate": len(unread),
+        "messages": messages,
+    }
