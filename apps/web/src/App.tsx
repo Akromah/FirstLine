@@ -1,6 +1,5 @@
 ﻿
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import maplibregl from "maplibre-gl";
 
 type Coordinates = { lat: number; lon: number };
 type IncidentSummary = { incident_id: string; call_type: string; priority: number; address: string; coordinates: Coordinates; status: string };
@@ -198,8 +197,9 @@ export default function App() {
   const [aiAssist, setAiAssist] = useState<AIAssist | null>(null);
 
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<maplibregl.Map | null>(null);
-  const markerRefs = useRef<maplibregl.Marker[]>([]);
+  const mapRef = useRef<any>(null);
+  const mapLibRef = useRef<any>(null);
+  const markerRefs = useRef<any[]>([]);
   const selectedIncidentIdRef = useRef(selectedIncidentId);
   const statusUnitIdRef = useRef(statusUnitId);
   const dictationRef = useRef<any>(null);
@@ -281,24 +281,34 @@ export default function App() {
 
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
-    const map = new maplibregl.Map({
-      container: mapContainerRef.current,
-      style: MAP_STYLE_URL,
-      center: [-117.1825, 34.0556],
-      zoom: 12,
-      attributionControl: false,
+    let canceled = false;
+    import("maplibre-gl").then((module) => {
+      if (canceled || !mapContainerRef.current || mapRef.current) return;
+      const maplibregl = module.default;
+      mapLibRef.current = maplibregl;
+      const map = new maplibregl.Map({
+        container: mapContainerRef.current,
+        style: MAP_STYLE_URL,
+        center: [-117.1825, 34.0556],
+        zoom: 12,
+        attributionControl: false,
+      });
+      mapRef.current = map;
+    }).catch(() => {
+      setBanner("Map library failed to load.");
     });
-    mapRef.current = map;
     return () => {
+      canceled = true;
       markerRefs.current.forEach((marker) => marker.remove());
       markerRefs.current = [];
-      map.remove();
+      mapRef.current?.remove();
       mapRef.current = null;
+      mapLibRef.current = null;
     };
   }, []);
 
   useEffect(() => {
-    if (!mapRef.current || !mapData) return;
+    if (!mapRef.current || !mapData || !mapLibRef.current) return;
     markerRefs.current.forEach((m) => m.remove());
     markerRefs.current = [];
 
@@ -306,14 +316,14 @@ export default function App() {
       const el = document.createElement("div");
       el.className = `map-unit-marker status-${unit.status.toLowerCase().replace("_", "-")}`;
       el.innerText = `${unit.callsign}\n${unit.status}`;
-      markerRefs.current.push(new maplibregl.Marker({ element: el }).setLngLat([unit.coordinates.lon, unit.coordinates.lat]).addTo(mapRef.current!));
+      markerRefs.current.push(new mapLibRef.current.Marker({ element: el }).setLngLat([unit.coordinates.lon, unit.coordinates.lat]).addTo(mapRef.current!));
     });
 
     mapData.active_incidents.forEach((incident: IncidentSummary) => {
       const el = document.createElement("div");
       el.className = "map-incident-marker";
       el.innerText = `P${incident.priority}`;
-      markerRefs.current.push(new maplibregl.Marker({ element: el }).setLngLat([incident.coordinates.lon, incident.coordinates.lat]).addTo(mapRef.current!));
+      markerRefs.current.push(new mapLibRef.current.Marker({ element: el }).setLngLat([incident.coordinates.lon, incident.coordinates.lat]).addTo(mapRef.current!));
     });
 
     if (selectedIncident) {
