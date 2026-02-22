@@ -262,6 +262,14 @@ def _latest_unit_event(incident: dict) -> str:
     return "NO_ACTIVITY"
 
 
+def _incident_dispatch_label(incident: dict | None) -> str:
+    if not incident:
+        return "No active CAD incident"
+    code = (incident.get("primary_code") or "").strip()
+    crime = (incident.get("crime_label") or incident.get("call_type") or "Unknown").strip()
+    return f"{code} {crime}".strip() if code else crime
+
+
 def build_unit_status_board() -> dict:
     units = get_live_units()
     available_units: list[dict] = []
@@ -301,6 +309,9 @@ def build_unit_status_board() -> dict:
                     **base,
                     "incident_id": active_incident["incident_id"],
                     "call_type": active_incident["call_type"],
+                    "crime_label": active_incident.get("crime_label"),
+                    "primary_code": active_incident.get("primary_code"),
+                    "call_display": _incident_dispatch_label(active_incident),
                     "incident_status": active_incident["status"],
                     "predicted_eta_minutes": active_incident.get("predicted_eta_minutes"),
                     "last_action": _latest_unit_event(active_incident),
@@ -315,6 +326,9 @@ def build_unit_status_board() -> dict:
                     **base,
                     "incident_id": None,
                     "call_type": "No active CAD incident",
+                    "crime_label": None,
+                    "primary_code": None,
+                    "call_display": "No active CAD incident",
                     "incident_status": unit.status,
                     "predicted_eta_minutes": None,
                     "last_action": "STATUS_ONLY",

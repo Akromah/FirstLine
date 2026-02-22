@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from app.core.state import parse_utc, state
 from app.modules.dispatch.service import AssignmentRequest, choose_unit
+from app.modules.intel.service import infer_primary_california_code
 from app.schemas.common import UnitSummary
 
 
@@ -117,6 +118,7 @@ def infer_required_skills(call_type: str, call_text: str) -> list[str]:
 def process_intake(payload: IntakeRequest) -> IntakeResponse:
     priority, reasons = score_priority(payload.call_text, payload.address)
     call_type = suggest_call_type(payload.call_text)
+    code_guess = infer_primary_california_code(payload.call_text, call_type)
     normalized_address = payload.address or "Address lookup pending"
     duplicate_ids = state.find_duplicate_incidents(normalized_address)
     required_skills = infer_required_skills(call_type, payload.call_text)
@@ -128,6 +130,8 @@ def process_intake(payload: IntakeRequest) -> IntakeResponse:
         address=normalized_address,
         coordinates={"lat": payload.lat or 34.0556, "lon": payload.lon or -117.1825},
         call_type=call_type,
+        crime_label=(code_guess or {}).get("title"),
+        primary_code=(f"{(code_guess or {}).get('code_family')} {(code_guess or {}).get('section')}" if code_guess else None),
         priority=priority,
         duplicate_call_ids=duplicate_ids,
         rationale=reasons,

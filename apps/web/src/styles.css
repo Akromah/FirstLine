@@ -904,6 +904,16 @@ body {
   color: #4c6285;
 }
 
+.policy-detail {
+  max-height: 420px;
+  overflow: auto;
+}
+
+.policy-detail a {
+  color: #9bc1ff;
+  font-weight: 700;
+}
+
 .ai-box {
   margin-top: 8px;
   border: 1px solid #d5e2f7;

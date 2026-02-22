@@ -108,6 +108,8 @@ class InMemoryState:
         self._incidents[incident_id] = {
             "incident_id": incident_id,
             "call_type": "Domestic",
+            "crime_label": "Domestic Violence",
+            "primary_code": "PC 273.5",
             "priority": 78,
             "address": "35 Cajon St, Redlands",
             "coordinates": {"lat": 34.0556, "lon": -117.1825},
@@ -325,6 +327,8 @@ class InMemoryState:
         address: str,
         coordinates: dict[str, float],
         call_type: str,
+        crime_label: str | None,
+        primary_code: str | None,
         priority: int,
         duplicate_call_ids: list[str],
         rationale: list[str],
@@ -336,6 +340,8 @@ class InMemoryState:
             incident = {
                 "incident_id": incident_id,
                 "call_type": call_type,
+                "crime_label": crime_label,
+                "primary_code": primary_code,
                 "priority": priority,
                 "address": address,
                 "coordinates": coordinates,
@@ -374,6 +380,8 @@ class InMemoryState:
                     IncidentSummary(
                         incident_id=incident["incident_id"],
                         call_type=incident["call_type"],
+                        crime_label=incident.get("crime_label"),
+                        primary_code=incident.get("primary_code"),
                         priority=incident["priority"],
                         address=incident["address"],
                         coordinates=incident["coordinates"],

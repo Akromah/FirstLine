@@ -2,7 +2,16 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Coordinates = { lat: number; lon: number };
-type IncidentSummary = { incident_id: string; call_type: string; priority: number; address: string; coordinates: Coordinates; status: string };
+type IncidentSummary = {
+  incident_id: string;
+  call_type: string;
+  crime_label?: string | null;
+  primary_code?: string | null;
+  priority: number;
+  address: string;
+  coordinates: Coordinates;
+  status: string;
+};
 type UnitSummary = {
   unit_id: string;
   callsign: string;
@@ -60,6 +69,9 @@ type UnitAvailabilityBoard = {
     skills: string[];
     incident_id?: string | null;
     call_type: string;
+    crime_label?: string | null;
+    primary_code?: string | null;
+    call_display?: string;
     incident_status: string;
     predicted_eta_minutes?: number | null;
     last_action: string;
@@ -157,6 +169,61 @@ type IncidentIntelPacket = {
   queries: { address_query: string; caller_query?: string | null };
   totals: { records: number; firearms: number; warrants: number; active_warrants: number };
   threat_indicators: string[];
+};
+type PolicySectionHit = {
+  section_id: string;
+  title: string;
+  category: string;
+  tags: string[];
+  summary: string;
+  snippet: string;
+  match_score: number;
+};
+type PolicySearchResponse = {
+  query: string;
+  sort_by: "relevance" | "title" | "section";
+  result_count: number;
+  best_guess?: PolicySectionHit | null;
+  results: PolicySectionHit[];
+};
+type PolicySectionDetail = {
+  section_id: string;
+  title: string;
+  category: string;
+  tags: string[];
+  summary: string;
+  body: string;
+};
+type CodeResult = {
+  code_key: string;
+  code_family: string;
+  section: string;
+  title: string;
+  offense_level: string;
+  summary: string;
+  aliases: string[];
+  keywords: string[];
+  statute_url: string;
+  match_score: number;
+  match_reasons: string[];
+};
+type CodeBestGuess = {
+  code_key: string;
+  code_family: string;
+  section: string;
+  title: string;
+  summary: string;
+  offense_level: string;
+  statute_url: string;
+  confidence: number;
+  reasons: string[];
+};
+type CodeSearchResponse = {
+  query: string;
+  sort_by: "relevance" | "numeric" | "alpha";
+  result_count: number;
+  best_guess?: CodeBestGuess | null;
+  results: CodeResult[];
 };
 
 type PersonProfile = {
@@ -291,6 +358,8 @@ type ModulePanel =
   | "assignedDeck"
   | "reportHub"
   | "intelHub"
+  | "policyHub"
+  | "codeHub"
   | "commandDash"
   | "unitReadiness"
   | "opTrends"
@@ -359,6 +428,13 @@ function trendSeries(series: number[]): string {
 
 function signed(value: number, suffix = ""): string {
   return `${value >= 0 ? "+" : ""}${value}${suffix}`;
+}
+
+function incidentDispatchLabel(incident: IncidentSummary | null | undefined): string {
+  if (!incident) return "Unknown";
+  const code = (incident.primary_code ?? "").trim();
+  const crime = (incident.crime_label ?? incident.call_type).trim();
+  return code ? `${code} ${crime}` : crime;
 }
 
 export default function App() {
@@ -475,6 +551,14 @@ export default function App() {
   const [lookup, setLookup] = useState<LookupResult | null>(null);
   const [profile, setProfile] = useState<PersonProfile | null>(null);
   const [incidentIntel, setIncidentIntel] = useState<IncidentIntelPacket | null>(null);
+  const [policyQuery, setPolicyQuery] = useState("taser");
+  const [policySort, setPolicySort] = useState<"relevance" | "title" | "section">("relevance");
+  const [policyResults, setPolicyResults] = useState<PolicySearchResponse | null>(null);
+  const [activePolicySection, setActivePolicySection] = useState<PolicySectionDetail | null>(null);
+  const [codeQuery, setCodeQuery] = useState("robbery");
+  const [codeSort, setCodeSort] = useState<"relevance" | "numeric" | "alpha">("relevance");
+  const [codeResults, setCodeResults] = useState<CodeSearchResponse | null>(null);
+  const [activeCodeDetail, setActiveCodeDetail] = useState<CodeResult | null>(null);
 
   const [aiPrompt, setAiPrompt] = useState("Provide next actions and final disposition.");
   const [aiAssist, setAiAssist] = useState<AIAssist | null>(null);
@@ -839,7 +923,7 @@ export default function App() {
 
   useEffect(() => {
     if (!selectedIncident) return;
-    setReportNarrative(`Incident ${selectedIncident.incident_id}: ${selectedIncident.call_type} at ${selectedIncident.address}.`);
+    setReportNarrative(`Incident ${selectedIncident.incident_id}: ${incidentDispatchLabel(selectedIncident)} at ${selectedIncident.address}.`);
     setChannelIncidentId(selectedIncident.incident_id);
     setIncidentIntel(null);
     setAiDispositionDraft(null);
@@ -914,6 +998,15 @@ export default function App() {
     }
     loadTemplates();
   }, [selectedIncident?.incident_id]);
+
+  useEffect(() => {
+    if (activeModule === "policyHub" && !policyResults) {
+      void runPolicySearch(policyQuery, policySort);
+    }
+    if (activeModule === "codeHub" && !codeResults) {
+      void runCodeSearch(codeQuery, codeSort);
+    }
+  }, [activeModule]);
 
   useEffect(() => {
     async function loadReportReadiness() {
@@ -1654,6 +1747,82 @@ export default function App() {
     await runIntelLookup(query);
   }
 
+  async function runPolicySearch(query: string, sort: "relevance" | "title" | "section") {
+    setLoading(true);
+    try {
+      const result = await fetchJson<PolicySearchResponse>(
+        `/api/v1/intel/policy/search?query=${encodeURIComponent(query)}&sort_by=${sort}&limit=40`
+      );
+      setPolicyResults(result);
+      if (result.best_guess?.section_id) {
+        const detail = await fetchJson<PolicySectionDetail>(`/api/v1/intel/policy/${encodeURIComponent(result.best_guess.section_id)}`);
+        setActivePolicySection(detail);
+      } else {
+        setActivePolicySection(null);
+      }
+      setBanner(`Policy search returned ${result.result_count} section(s).`);
+    } catch (error) {
+      setBanner(`Policy search failed: ${(error as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handlePolicySearch() {
+    await runPolicySearch(policyQuery, policySort);
+  }
+
+  async function handleOpenPolicySection(sectionId: string) {
+    setLoading(true);
+    try {
+      const detail = await fetchJson<PolicySectionDetail>(`/api/v1/intel/policy/${encodeURIComponent(sectionId)}`);
+      setActivePolicySection(detail);
+      setBanner(`Opened policy section ${detail.section_id}.`);
+    } catch (error) {
+      setBanner(`Policy section load failed: ${(error as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function runCodeSearch(query: string, sort: "relevance" | "numeric" | "alpha") {
+    setLoading(true);
+    try {
+      const result = await fetchJson<CodeSearchResponse>(
+        `/api/v1/intel/code/search?query=${encodeURIComponent(query)}&sort_by=${sort}&limit=50`
+      );
+      setCodeResults(result);
+      if (result.best_guess?.code_key) {
+        const detail = await fetchJson<CodeResult>(`/api/v1/intel/code/${encodeURIComponent(result.best_guess.code_key)}`);
+        setActiveCodeDetail({ ...detail, match_score: result.best_guess.confidence * 100, match_reasons: result.best_guess.reasons });
+      } else {
+        setActiveCodeDetail(null);
+      }
+      setBanner(`Code search returned ${result.result_count} match(es).`);
+    } catch (error) {
+      setBanner(`Code search failed: ${(error as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleCodeSearch() {
+    await runCodeSearch(codeQuery, codeSort);
+  }
+
+  async function handleOpenCodeDetail(codeKey: string) {
+    setLoading(true);
+    try {
+      const detail = await fetchJson<CodeResult>(`/api/v1/intel/code/${encodeURIComponent(codeKey)}`);
+      setActiveCodeDetail({ ...detail, match_score: detail.match_score ?? 0, match_reasons: detail.match_reasons ?? [] });
+      setBanner(`Opened code ${detail.code_key}.`);
+    } catch (error) {
+      setBanner(`Code detail load failed: ${(error as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function handleExportIncidentPacket() {
     if (!selectedIncident) return;
     const payload = {
@@ -1820,6 +1989,8 @@ export default function App() {
     priorityRadar: priorityBoard?.incidents.filter((item) => item.risk_score >= 80).length,
     assignedDeck: officerFeed?.assigned_incidents.length,
     reportHub: reportHub?.drafts.length,
+    policyHub: policyResults?.result_count,
+    codeHub: codeResults?.result_count,
     reviewQueue: reviewQueue?.review_count,
     reportingMetrics: reportingMetrics?.changes_requested,
     messaging: messageInbox?.unread_estimate,
@@ -1834,6 +2005,8 @@ export default function App() {
     { id: "assignedDeck", label: "Assigned Deck", icon: "A", visible: showField, badge: moduleCounts.assignedDeck },
     { id: "reportHub", label: "Report Hub", icon: "RP", visible: showReport || showField || showDispatch, badge: moduleCounts.reportHub },
     { id: "intelHub", label: "Intel Hub", icon: "DB", visible: showIntel || showField || showDispatch },
+    { id: "policyHub", label: "Policy Hub", icon: "POL", visible: showIntel || showField || showDispatch, badge: moduleCounts.policyHub },
+    { id: "codeHub", label: "Code Hub", icon: "PC", visible: showIntel || showField || showDispatch, badge: moduleCounts.codeHub },
     { id: "commandDash", label: "Command", icon: "CMD", visible: showDispatch || showReport },
     { id: "unitReadiness", label: "Unit Board", icon: "U", visible: showDispatch || showField, badge: moduleCounts.unitReadiness },
     { id: "opTrends", label: "Trends", icon: "T", visible: showDispatch || showReport },
@@ -2156,7 +2329,7 @@ export default function App() {
                       {reportReadiness?.ready_for_submission ? "RMS READY" : "RMS BLOCKED"}
                     </span>
                   </div>
-                  <p>{selectedIncident.call_type} · P{selectedIncident.priority} · {selectedIncident.status}</p>
+                  <p>{incidentDispatchLabel(selectedIncident)} · P{selectedIncident.priority} · {selectedIncident.status}</p>
                   <p>{selectedIncident.address}</p>
                   <p>
                     Risk {riskProfile?.risk_score ?? selectedIncident.priority}
@@ -2190,7 +2363,7 @@ export default function App() {
             </div>
             {filteredQueue.map((incident) => (
               <button key={incident.incident_id} type="button" className="list-row" onClick={() => setSelectedIncidentId(incident.incident_id)}>
-                <div><strong>{incident.incident_id} - {incident.call_type}</strong><p>{incident.address}</p></div>
+                <div><strong>{incident.incident_id} - {incidentDispatchLabel(incident)}</strong><p>{incident.address}</p></div>
                 <div className="queue-meta"><span className="badge">P{incident.priority}</span><span className="badge soft">{incident.status}</span></div>
               </button>
             ))}
@@ -2493,6 +2666,122 @@ export default function App() {
             ) : null}
           </article>
           ) : null}
+          {activeModule === "policyHub" ? (
+          <article className="card panel module-overlay">
+            <h2>Policy Hub</h2>
+            <p className="section-subtitle">Search policy sections by keyword, section number, or topic.</p>
+            <div className="search-row">
+              <input value={policyQuery} onChange={(e) => setPolicyQuery(e.target.value)} placeholder="Search policy (ex: taser, cross draw, report writing)" />
+              <button type="button" onClick={handlePolicySearch} disabled={loading}>Search Policy</button>
+            </div>
+            <div className="template-row">
+              <label className="form-field">
+                Sort
+                <select value={policySort} onChange={(e) => setPolicySort(e.target.value as "relevance" | "title" | "section")}>
+                  <option value="relevance">Relevance</option>
+                  <option value="section">Section</option>
+                  <option value="title">Title</option>
+                </select>
+              </label>
+              <div className="form-field">
+                <span>Best Match</span>
+                <div className="dispatch-banner">
+                  {policyResults?.best_guess ? `${policyResults.best_guess.section_id} ${policyResults.best_guess.title}` : "No current match"}
+                </div>
+              </div>
+            </div>
+            <div className="hub-grid">
+              <div className="hub-col">
+                <h3>Matching Sections ({policyResults?.result_count ?? 0})</h3>
+                {(policyResults?.results ?? []).map((section) => (
+                  <button key={section.section_id} type="button" className="list-row static intel-row" onClick={() => handleOpenPolicySection(section.section_id)}>
+                    <div>
+                      <strong>{section.section_id} · {section.title}</strong>
+                      <p>{section.category}</p>
+                      <p>{section.snippet}</p>
+                    </div>
+                    <span className="badge soft">Open</span>
+                  </button>
+                ))}
+                {(policyResults?.results ?? []).length === 0 ? <div className="dispatch-banner">No policy sections loaded yet.</div> : null}
+              </div>
+              <div className="hub-col">
+                <h3>Section Detail</h3>
+                {activePolicySection ? (
+                  <div className="profile-card policy-detail">
+                    <strong>{activePolicySection.section_id} · {activePolicySection.title}</strong>
+                    <p>Category: {activePolicySection.category}</p>
+                    <p>Tags: {activePolicySection.tags.join(", ")}</p>
+                    <p>{activePolicySection.summary}</p>
+                    <p>{activePolicySection.body}</p>
+                  </div>
+                ) : (
+                  <div className="dispatch-banner">Select a policy hit to open full section text.</div>
+                )}
+              </div>
+            </div>
+          </article>
+          ) : null}
+          {activeModule === "codeHub" ? (
+          <article className="card panel module-overlay">
+            <h2>Code Hub</h2>
+            <p className="section-subtitle">Search California code references by number or crime language.</p>
+            <div className="search-row">
+              <input value={codeQuery} onChange={(e) => setCodeQuery(e.target.value)} placeholder="Search code (ex: robbery, 211, strong armed)" />
+              <button type="button" onClick={handleCodeSearch} disabled={loading}>Search Codes</button>
+            </div>
+            <div className="template-row">
+              <label className="form-field">
+                Sort
+                <select value={codeSort} onChange={(e) => setCodeSort(e.target.value as "relevance" | "numeric" | "alpha")}>
+                  <option value="relevance">Relevance</option>
+                  <option value="numeric">Numeric</option>
+                  <option value="alpha">Alphabetic</option>
+                </select>
+              </label>
+              <div className="form-field">
+                <span>AI Best Guess</span>
+                <div className="dispatch-banner">
+                  {codeResults?.best_guess
+                    ? `${codeResults.best_guess.code_key} ${codeResults.best_guess.title} (${Math.round(codeResults.best_guess.confidence * 100)}%)`
+                    : "No best guess yet"}
+                </div>
+              </div>
+            </div>
+            <div className="hub-grid">
+              <div className="hub-col">
+                <h3>Matches ({codeResults?.result_count ?? 0})</h3>
+                {(codeResults?.results ?? []).map((code) => (
+                  <button key={code.code_key} type="button" className="list-row static intel-row" onClick={() => handleOpenCodeDetail(code.code_key)}>
+                    <div>
+                      <strong>{code.code_key} · {code.title}</strong>
+                      <p>{code.offense_level}</p>
+                      <p>{code.summary}</p>
+                    </div>
+                    <span className="badge soft">{Math.round(code.match_score)}</span>
+                  </button>
+                ))}
+                {(codeResults?.results ?? []).length === 0 ? <div className="dispatch-banner">No code results loaded yet.</div> : null}
+              </div>
+              <div className="hub-col">
+                <h3>Code Detail</h3>
+                {activeCodeDetail ? (
+                  <div className="profile-card policy-detail">
+                    <strong>{activeCodeDetail.code_key} · {activeCodeDetail.title}</strong>
+                    <p>Section: {activeCodeDetail.section} · Level: {activeCodeDetail.offense_level}</p>
+                    <p>{activeCodeDetail.summary}</p>
+                    <p>Aliases: {activeCodeDetail.aliases.join(", ") || "None"}</p>
+                    <p>Keywords: {activeCodeDetail.keywords.join(", ") || "None"}</p>
+                    <p>Match signals: {activeCodeDetail.match_reasons.join(" | ") || "Keyword relevance"}</p>
+                    <p><a href={activeCodeDetail.statute_url} target="_blank" rel="noreferrer">Open statute reference</a></p>
+                  </div>
+                ) : (
+                  <div className="dispatch-banner">Select a code result to open full detail.</div>
+                )}
+              </div>
+            </div>
+          </article>
+          ) : null}
         </section>
 
         {rightColumnActive ? <aside className="right-column">
@@ -2538,7 +2827,7 @@ export default function App() {
                   <div key={unit.unit_id} className="hub-row">
                     <strong>{unit.callsign} · {unit.officer_name} · {unit.role}</strong>
                     <p>Status code: {unit.status_code} · Incident status: {unit.incident_status}</p>
-                    <p>{unit.call_type} · {unit.current_location} · Shift {unit.shift ?? "n/a"} · Beat {unit.beat ?? "n/a"}</p>
+                    <p>{unit.call_display ?? unit.call_type} · {unit.current_location} · Shift {unit.shift ?? "n/a"} · Beat {unit.beat ?? "n/a"}</p>
                     <p>
                       {unit.incident_id ? `Incident ${unit.incident_id}` : "No active incident"} · Last action {unit.last_action}
                       {unit.predicted_eta_minutes ? ` · ETA ${unit.predicted_eta_minutes}m` : ""}

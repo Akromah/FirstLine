@@ -24,6 +24,8 @@ class UnitSummary(BaseModel):
 class IncidentSummary(BaseModel):
     incident_id: str
     call_type: str
+    crime_label: str | None = None
+    primary_code: str | None = None
     priority: int
     address: str
     coordinates: Coordinates

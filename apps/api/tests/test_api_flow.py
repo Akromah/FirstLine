@@ -437,3 +437,68 @@ def test_intake_dispatch_reporting_flow() -> None:
     patrol_assignment_payload = patrol_assign_response.json()
     assert patrol_assignment_payload["recommended_unit_id"] not in {"u-sgt-10", "u-lt-20"}
     assert patrol_assignment_payload["recommended_unit_id"] != "UNAVAILABLE"
+
+    robbery_intake_response = client.post(
+        "/api/v1/intake/calls",
+        json={
+            "caller_name": "Store Clerk",
+            "phone": "555-9111",
+            "call_text": "Strong armed robbery in progress, suspect grabbed cash and fled on foot.",
+            "address": "99 State St, Redlands",
+            "lat": 34.0587,
+            "lon": -117.1831,
+        },
+    )
+    assert robbery_intake_response.status_code == 200
+    robbery_incident_id = robbery_intake_response.json()["call_id"]
+
+    robbery_queue_response = client.get("/api/v1/dispatch/queue")
+    assert robbery_queue_response.status_code == 200
+    robbery_record = next(
+        (item for item in robbery_queue_response.json()["incidents"] if item["incident_id"] == robbery_incident_id),
+        None,
+    )
+    assert robbery_record is not None
+    assert robbery_record["primary_code"] == "PC 211"
+    assert robbery_record["crime_label"] == "Robbery"
+
+    robbery_assign_response = client.post(
+        "/api/v1/dispatch/assign",
+        json={
+            "incident_id": robbery_incident_id,
+            "required_skills": ["Crisis"],
+            "incident_lat": 34.0587,
+            "incident_lon": -117.1831,
+        },
+    )
+    assert robbery_assign_response.status_code == 200
+
+    board_after_robbery = client.get("/api/v1/dispatch/availability-board")
+    assert board_after_robbery.status_code == 200
+    board_rows = board_after_robbery.json()["unavailable_units"]
+    assert any("PC 211 Robbery" in row.get("call_display", "") for row in board_rows)
+
+    policy_search_response = client.get("/api/v1/intel/policy/search", params={"query": "taser", "sort_by": "relevance"})
+    assert policy_search_response.status_code == 200
+    policy_search_payload = policy_search_response.json()
+    assert policy_search_payload["result_count"] >= 1
+    assert any("Taser" in item["title"] for item in policy_search_payload["results"])
+
+    taser_policy_response = client.get("/api/v1/intel/policy/2.245")
+    assert taser_policy_response.status_code == 200
+    taser_policy_payload = taser_policy_response.json()
+    assert "Cross-draw" in taser_policy_payload["body"] or "Cross-draw" in taser_policy_payload["summary"]
+
+    code_search_response = client.get("/api/v1/intel/code/search", params={"query": "robbery", "sort_by": "relevance"})
+    assert code_search_response.status_code == 200
+    code_search_payload = code_search_response.json()
+    assert code_search_payload["best_guess"]["section"] == "211"
+
+    strong_arm_search = client.get("/api/v1/intel/code/search", params={"query": "strong armed", "sort_by": "relevance"})
+    assert strong_arm_search.status_code == 200
+    strong_arm_payload = strong_arm_search.json()
+    assert strong_arm_payload["best_guess"]["section"] == "211"
+
+    code_detail_response = client.get("/api/v1/intel/code/PC-211")
+    assert code_detail_response.status_code == 200
+    assert code_detail_response.json()["title"] == "Robbery"
