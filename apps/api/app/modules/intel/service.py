@@ -1,7 +1,16 @@
+from datetime import datetime, timezone
+from html import unescape
+from functools import lru_cache
 import re
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 
 from app.core.state import state
-from app.modules.intel.reference_data import CALIFORNIA_CODE_INDEX, POLICY_SECTIONS
+from app.modules.intel.reference_data import (
+    CALIFORNIA_CODE_INDEX,
+    POLICY_LIBRARY_PROFILE,
+    POLICY_SECTIONS,
+)
 
 
 def _normalize(value: str) -> str:
@@ -20,9 +29,76 @@ def _numeric_key(section: str) -> tuple[float, str]:
 
 
 def _code_statute_url(code_family: str, section: str) -> str:
-    law_code = "PEN" if code_family.upper() == "PC" else "VEH"
+    law_map = {"PC": "PEN", "VC": "VEH", "HS": "HSC", "WIC": "WIC"}
+    law_code = law_map.get(code_family.upper(), code_family.upper())
     encoded_section = section.replace(" ", "")
     return f"https://leginfo.legislature.ca.gov/faces/codes_displaySection.xhtml?lawCode={law_code}&sectionNum={encoded_section}"
+
+
+def _clean_html_fragment(value: str) -> str:
+    text = re.sub(r"<[^>]+>", " ", value or "")
+    text = unescape(text.replace("\xa0", " "))
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _derive_title_from_chapter(chapter: str, fallback: str) -> str:
+    match = re.search(r"\.\s*([^\[]+)", chapter)
+    if match:
+        candidate = match.group(1).strip()
+        if candidate:
+            return candidate
+    return fallback
+
+
+def _parse_code_query(value: str) -> tuple[str, str] | None:
+    normalized = value.strip().upper().replace(" ", "")
+    if not normalized:
+        return None
+
+    # Accept formats like 211, PC211, PC-211, VC20001, 245(A)(1)
+    match = re.match(r"^(?:(PC|PEN|VC|VEH|HS|HSC|WIC)-?)?([0-9]+(?:\.[0-9]+)?(?:\([A-Z0-9]+\))*)$", normalized)
+    if not match:
+        return None
+
+    family_token = match.group(1) or "PC"
+    section = match.group(2)
+    family_map = {"PEN": "PC", "PC": "PC", "VEH": "VC", "VC": "VC", "HS": "HS", "HSC": "HS", "WIC": "WIC"}
+    family = family_map.get(family_token, "PC")
+    return family, section
+
+
+@lru_cache(maxsize=256)
+def _fetch_official_california_section(code_family: str, section: str) -> dict | None:
+    url = _code_statute_url(code_family=code_family, section=section)
+    request = urllib_request.Request(url, headers={"User-Agent": "FirstLineCAD/1.0"})
+    try:
+        with urllib_request.urlopen(request, timeout=7) as response:
+            content = response.read().decode("utf-8", errors="ignore")
+    except (urllib_error.URLError, TimeoutError, ValueError):
+        return None
+
+    chapter_match = re.search(r"<h5[^>]*><b>(.*?)</b></h5>", content, re.IGNORECASE | re.DOTALL)
+    section_match = re.search(
+        r"<h6[^>]*><b>(.*?)</b></h6>\s*<p[^>]*>(.*?)</p>\s*(?:<i>\((.*?)\)</i>)?",
+        content,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not section_match:
+        return None
+
+    chapter = _clean_html_fragment(chapter_match.group(1)) if chapter_match else ""
+    section_label = _clean_html_fragment(section_match.group(1))
+    section_text = _clean_html_fragment(section_match.group(2))
+    history = _clean_html_fragment(section_match.group(3) or "")
+    return {
+        "source": "California Legislative Information",
+        "source_url": url,
+        "chapter": chapter,
+        "section_label": section_label,
+        "section_text": section_text,
+        "history": history,
+        "retrieved_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
 
 
 def _code_match_result(entry: dict, query_tokens: list[str], normalized_query: str) -> tuple[int, list[str]]:
@@ -82,6 +158,7 @@ def search_california_codes(query: str, sort_by: str = "relevance", limit: int =
             {
                 **entry,
                 "statute_url": _code_statute_url(entry["code_family"], entry["section"]),
+                "library_source": "California Legislative Information",
                 "match_score": score,
                 "match_reasons": reasons,
             }
@@ -92,11 +169,38 @@ def search_california_codes(query: str, sort_by: str = "relevance", limit: int =
             {
                 **entry,
                 "statute_url": _code_statute_url(entry["code_family"], entry["section"]),
+                "library_source": "California Legislative Information",
                 "match_score": 0,
                 "match_reasons": [],
             }
             for entry in CALIFORNIA_CODE_INDEX
         ]
+
+    # If no local library hit and query looks like a statute key, fetch from official source.
+    if normalized_query and not rows:
+        parsed = _parse_code_query(query)
+        if parsed:
+            family, section = parsed
+            official = _fetch_official_california_section(code_family=family, section=section)
+            if official and official.get("section_text"):
+                chapter = official.get("chapter", "")
+                derived_title = _derive_title_from_chapter(chapter, fallback=f"Section {section}")
+                rows.append(
+                    {
+                        "code_key": f"{family}-{section}",
+                        "code_family": family,
+                        "section": section,
+                        "title": derived_title,
+                        "offense_level": "Statute",
+                        "summary": official["section_text"],
+                        "aliases": [],
+                        "keywords": [],
+                        "statute_url": official["source_url"],
+                        "library_source": official["source"],
+                        "match_score": 120,
+                        "match_reasons": ["Official statute lookup"],
+                    }
+                )
 
     relevance_ranked = sorted(rows, key=lambda item: (item["match_score"], item["title"]), reverse=True)
     best_guess = relevance_ranked[0] if relevance_ranked else None
@@ -125,6 +229,7 @@ def search_california_codes(query: str, sort_by: str = "relevance", limit: int =
                 "summary": best_guess["summary"],
                 "offense_level": best_guess["offense_level"],
                 "statute_url": best_guess["statute_url"],
+                "library_source": best_guess.get("library_source", "California Legislative Information"),
                 "confidence": confidence,
                 "reasons": best_guess.get("match_reasons", []),
             }
@@ -140,12 +245,43 @@ def get_california_code(code_key: str) -> dict | None:
     for entry in CALIFORNIA_CODE_INDEX:
         entry_key = entry["code_key"].lower().replace("-", "")
         if normalized in {entry_key, entry["section"].lower().replace(" ", "")}:
+            official = _fetch_official_california_section(code_family=entry["code_family"], section=entry["section"])
             return {
                 **entry,
                 "statute_url": _code_statute_url(entry["code_family"], entry["section"]),
+                "library_source": "California Legislative Information",
+                "official_source_connected": bool(official and official.get("section_text")),
+                "official_source": official,
                 "match_score": 0,
                 "match_reasons": [],
             }
+
+    parsed = _parse_code_query(code_key)
+    if not parsed:
+        return None
+    family, section = parsed
+    official = _fetch_official_california_section(code_family=family, section=section)
+    if not official or not official.get("section_text"):
+        return None
+
+    chapter = official.get("chapter", "")
+    derived_title = _derive_title_from_chapter(chapter, fallback=f"Section {section}")
+    return {
+        "code_key": f"{family}-{section}",
+        "code_family": family,
+        "section": section,
+        "title": derived_title,
+        "offense_level": "Statute",
+        "summary": official["section_text"],
+        "aliases": [],
+        "keywords": [],
+        "statute_url": official["source_url"],
+        "library_source": official["source"],
+        "official_source_connected": True,
+        "official_source": official,
+        "match_score": 0,
+        "match_reasons": ["Official statute lookup"],
+    }
     return None
 
 
@@ -187,6 +323,9 @@ def _policy_match_result(entry: dict, query_tokens: list[str], normalized_query:
             entry["summary"],
             " ".join(entry.get("tags", [])),
             entry["body"],
+            entry.get("source_policy_title", ""),
+            entry.get("source_policy_id", ""),
+            entry.get("source_agency", ""),
         ]
     ).lower()
     score = 0
@@ -234,6 +373,10 @@ def search_policy_sections(query: str, sort_by: str = "relevance", limit: int = 
                 "tags": entry["tags"],
                 "summary": entry["summary"],
                 "snippet": snippet,
+                "source_agency": entry.get("source_agency"),
+                "source_policy_id": entry.get("source_policy_id"),
+                "source_policy_title": entry.get("source_policy_title"),
+                "source_url": entry.get("source_url"),
                 "match_score": score,
             }
         )
@@ -247,6 +390,10 @@ def search_policy_sections(query: str, sort_by: str = "relevance", limit: int = 
                 "tags": entry["tags"],
                 "summary": entry["summary"],
                 "snippet": entry["summary"],
+                "source_agency": entry.get("source_agency"),
+                "source_policy_id": entry.get("source_policy_id"),
+                "source_policy_title": entry.get("source_policy_title"),
+                "source_url": entry.get("source_url"),
                 "match_score": 0,
             }
             for entry in POLICY_SECTIONS
@@ -267,6 +414,7 @@ def search_policy_sections(query: str, sort_by: str = "relevance", limit: int = 
         "query": query,
         "sort_by": mode,
         "result_count": len(capped),
+        "library_profile": POLICY_LIBRARY_PROFILE,
         "best_guess": capped[0] if capped else None,
         "results": capped,
     }
@@ -276,7 +424,7 @@ def get_policy_section(section_id: str) -> dict | None:
     target = section_id.strip().lower()
     for entry in POLICY_SECTIONS:
         if entry["section_id"].lower() == target:
-            return entry.copy()
+            return {**entry, "library_profile": POLICY_LIBRARY_PROFILE}
     return None
 
 
@@ -285,6 +433,7 @@ def policy_catalog() -> dict:
     for section in POLICY_SECTIONS:
         categories[section["category"]] = categories.get(section["category"], 0) + 1
     return {
+        "library_profile": POLICY_LIBRARY_PROFILE,
         "total_sections": len(POLICY_SECTIONS),
         "categories": categories,
         "sections": [
@@ -293,6 +442,8 @@ def policy_catalog() -> dict:
                 "title": item["title"],
                 "category": item["category"],
                 "summary": item["summary"],
+                "source_policy_id": item.get("source_policy_id"),
+                "source_policy_title": item.get("source_policy_title"),
             }
             for item in sorted(POLICY_SECTIONS, key=lambda row: row["section_id"])
         ],

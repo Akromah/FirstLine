@@ -497,6 +497,7 @@ def test_intake_dispatch_reporting_flow() -> None:
     assert policy_search_response.status_code == 200
     policy_search_payload = policy_search_response.json()
     assert policy_search_payload["result_count"] >= 1
+    assert policy_search_payload["library_profile"]["source_agency"] == "East Palo Alto Police Department"
     assert any("Taser" in item["title"] for item in policy_search_payload["results"])
 
     taser_policy_response = client.get("/api/v1/intel/policy/2.245")
@@ -517,6 +518,8 @@ def test_intake_dispatch_reporting_flow() -> None:
     code_detail_response = client.get("/api/v1/intel/code/PC-211")
     assert code_detail_response.status_code == 200
     assert code_detail_response.json()["title"] == "Robbery"
+    assert code_detail_response.json()["official_source_connected"] is True
+    assert "felonious taking" in code_detail_response.json()["official_source"]["section_text"].lower()
 
     robbery_audit_response = client.post(
         "/api/v1/reporting/audit",

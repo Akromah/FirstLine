@@ -185,12 +185,24 @@ type PolicySectionHit = {
   tags: string[];
   summary: string;
   snippet: string;
+  source_agency?: string | null;
+  source_policy_id?: string | null;
+  source_policy_title?: string | null;
+  source_url?: string | null;
   match_score: number;
 };
 type PolicySearchResponse = {
   query: string;
   sort_by: "relevance" | "title" | "section";
   result_count: number;
+  library_profile?: {
+    library_name?: string;
+    simulated_agency?: string;
+    source_agency?: string;
+    source_collection?: string;
+    source_url?: string;
+    notes?: string;
+  };
   best_guess?: PolicySectionHit | null;
   results: PolicySectionHit[];
 };
@@ -201,6 +213,18 @@ type PolicySectionDetail = {
   tags: string[];
   summary: string;
   body: string;
+  source_agency?: string | null;
+  source_policy_id?: string | null;
+  source_policy_title?: string | null;
+  source_url?: string | null;
+  library_profile?: {
+    library_name?: string;
+    simulated_agency?: string;
+    source_agency?: string;
+    source_collection?: string;
+    source_url?: string;
+    notes?: string;
+  };
 };
 type CodeResult = {
   code_key: string;
@@ -212,6 +236,17 @@ type CodeResult = {
   aliases: string[];
   keywords: string[];
   statute_url: string;
+  library_source?: string;
+  official_source_connected?: boolean;
+  official_source?: {
+    source: string;
+    source_url: string;
+    chapter: string;
+    section_label: string;
+    section_text: string;
+    history?: string;
+    retrieved_at: string;
+  } | null;
   match_score: number;
   match_reasons: string[];
 };
@@ -223,6 +258,7 @@ type CodeBestGuess = {
   summary: string;
   offense_level: string;
   statute_url: string;
+  library_source?: string;
   confidence: number;
   reasons: string[];
 };
@@ -419,7 +455,7 @@ type ModuleButton = {
   badge?: number;
 };
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "").trim().replace(/\/$/, "");
 const MAP_STYLE_URL =
   import.meta.env.VITE_MAP_STYLE_URL ?? "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
 const MAP_FALLBACK_STYLE = {
@@ -443,12 +479,37 @@ const MAP_FALLBACK_STYLE = {
 const PREFS_KEY = "firstline_ui_prefs_v1";
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-  });
-  if (!res.ok) throw new Error(`Request failed: ${res.status}`);
-  return (await res.json()) as T;
+  const bases = API_BASE ? [API_BASE, ""] : [""];
+  let lastError: Error | null = null;
+
+  for (let index = 0; index < bases.length; index += 1) {
+    const base = bases[index];
+    const url = `${base}${path}`;
+    try {
+      const res = await fetch(url, {
+        ...init,
+        headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+      });
+      if (!res.ok) {
+        const err = new Error(`Request failed: ${res.status}`);
+        if (index < bases.length - 1) {
+          lastError = err;
+          continue;
+        }
+        throw err;
+      }
+      return (await res.json()) as T;
+    } catch (error) {
+      const err = error as Error;
+      if (index < bases.length - 1) {
+        lastError = err;
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw lastError ?? new Error("Request failed");
 }
 
 function parseSkills(raw: string): string[] {
@@ -3120,6 +3181,13 @@ export default function App() {
           <article className="card panel module-overlay">
             <h2>Policy Hub</h2>
             <p className="section-subtitle">Search policy sections by keyword, section number, or topic.</p>
+            {policyResults?.library_profile ? (
+              <div className="dispatch-banner">
+                Library: {policyResults.library_profile.library_name ?? "Policy Library"} ·
+                Simulated agency: {policyResults.library_profile.simulated_agency ?? "FirstLine PD"} ·
+                Source: {policyResults.library_profile.source_agency ?? "Police policy source"}
+              </div>
+            ) : null}
             <div className="search-row">
               <input value={policyQuery} onChange={(e) => setPolicyQuery(e.target.value)} placeholder="Search policy (ex: taser, cross draw, report writing)" />
               <button type="button" onClick={handlePolicySearch} disabled={loading}>Search Policy</button>
@@ -3148,6 +3216,9 @@ export default function App() {
                     <div>
                       <strong>{section.section_id} · {section.title}</strong>
                       <p>{section.category}</p>
+                      {section.source_policy_id || section.source_policy_title ? (
+                        <p>Source: {section.source_policy_id ?? ""} {section.source_policy_title ?? ""}</p>
+                      ) : null}
                       <p>{section.snippet}</p>
                     </div>
                     <span className="badge soft">Open</span>
@@ -3162,8 +3233,17 @@ export default function App() {
                     <strong>{activePolicySection.section_id} · {activePolicySection.title}</strong>
                     <p>Category: {activePolicySection.category}</p>
                     <p>Tags: {activePolicySection.tags.join(", ")}</p>
+                    {activePolicySection.source_agency ? (
+                      <p>Source Agency: {activePolicySection.source_agency}</p>
+                    ) : null}
+                    {activePolicySection.source_policy_id || activePolicySection.source_policy_title ? (
+                      <p>Source Policy: {activePolicySection.source_policy_id ?? ""} {activePolicySection.source_policy_title ?? ""}</p>
+                    ) : null}
                     <p>{activePolicySection.summary}</p>
                     <p>{activePolicySection.body}</p>
+                    {activePolicySection.source_url ? (
+                      <p><a href={activePolicySection.source_url} target="_blank" rel="noreferrer">Open source policy reference</a></p>
+                    ) : null}
                   </div>
                 ) : (
                   <div className="dispatch-banner">Select a policy hit to open full section text.</div>
@@ -3219,10 +3299,19 @@ export default function App() {
                   <div className="profile-card policy-detail">
                     <strong>{activeCodeDetail.code_key} · {activeCodeDetail.title}</strong>
                     <p>Section: {activeCodeDetail.section} · Level: {activeCodeDetail.offense_level}</p>
+                    <p>Library source: {activeCodeDetail.library_source ?? "California Legislative Information"}</p>
                     <p>{activeCodeDetail.summary}</p>
                     <p>Aliases: {activeCodeDetail.aliases.join(", ") || "None"}</p>
                     <p>Keywords: {activeCodeDetail.keywords.join(", ") || "None"}</p>
                     <p>Match signals: {activeCodeDetail.match_reasons.join(" | ") || "Keyword relevance"}</p>
+                    {activeCodeDetail.official_source_connected && activeCodeDetail.official_source ? (
+                      <div className="dispatch-banner success">
+                        Official statute connected: {activeCodeDetail.official_source.section_label}
+                      </div>
+                    ) : null}
+                    {activeCodeDetail.official_source?.chapter ? <p>Chapter: {activeCodeDetail.official_source.chapter}</p> : null}
+                    {activeCodeDetail.official_source?.section_text ? <p>{activeCodeDetail.official_source.section_text}</p> : null}
+                    {activeCodeDetail.official_source?.history ? <p>History: {activeCodeDetail.official_source.history}</p> : null}
                     <p><a href={activeCodeDetail.statute_url} target="_blank" rel="noreferrer">Open statute reference</a></p>
                   </div>
                 ) : (

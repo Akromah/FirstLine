@@ -208,6 +208,16 @@ CALIFORNIA_CODE_INDEX: list[dict] = [
     },
 ]
 
+POLICY_LIBRARY_PROFILE: dict = {
+    "library_name": "FirstLine Simulated Policy Library",
+    "simulated_agency": "FirstLine Police Department (demo)",
+    "source_agency": "East Palo Alto Police Department",
+    "source_collection": "Policies and Procedures",
+    "source_url": "https://www.cityofepa.org/police/page/policies-and-procedures",
+    "notes": "Section text is adapted into a training/demo policy library with searchable titles and tags.",
+}
+
+
 POLICY_SECTIONS: list[dict] = [
     {
         "section_id": "1.100",
@@ -220,6 +230,10 @@ POLICY_SECTIONS: list[dict] = [
             "Any member who observes objectively unreasonable force, unlawful detention, or rights-violating conduct "
             "shall intervene when safe and practical, notify a supervisor, and document the intervention in reporting."
         ),
+        "source_agency": "East Palo Alto Police Department",
+        "source_policy_id": "100",
+        "source_policy_title": "Law Enforcement Authority",
+        "source_url": "https://www.cityofepa.org/sites/default/files/fileattachments/police/page/8571/100._law_enforcement_authority.pdf",
     },
     {
         "section_id": "2.210",
@@ -232,6 +246,10 @@ POLICY_SECTIONS: list[dict] = [
             "Officers shall continuously reassess resistance, bystander risk, and available alternatives. "
             "All reportable force requires full narrative, evidence linkage, and supervisor review."
         ),
+        "source_agency": "East Palo Alto Police Department",
+        "source_policy_id": "300",
+        "source_policy_title": "Use of Force",
+        "source_url": "https://www.cityofepa.org/sites/default/files/fileattachments/police/page/8571/use_of_force_with_suspended_carotid_06222020.pdf",
     },
     {
         "section_id": "2.245",
@@ -246,6 +264,10 @@ POLICY_SECTIONS: list[dict] = [
             "Drive-stun is not a substitute for probe deployment when probe deployment is safe and practical. "
             "After activation, members request medical evaluation, capture evidence photographs where lawful, and complete force reporting before end of shift."
         ),
+        "source_agency": "East Palo Alto Police Department",
+        "source_policy_id": "308",
+        "source_policy_title": "Conducted Energy Device",
+        "source_url": "https://www.cityofepa.org/sites/default/files/fileattachments/police/page/8571/308_conducted_energy_device.pdf",
     },
     {
         "section_id": "2.310",
@@ -257,6 +279,10 @@ POLICY_SECTIONS: list[dict] = [
             "Vehicle pursuits are limited to violent felonies or imminent public danger when apprehension need outweighs risk. "
             "Supervisors shall monitor speed, route, weather, and identity confidence and terminate when risk becomes unreasonable."
         ),
+        "source_agency": "East Palo Alto Police Department",
+        "source_policy_id": "306",
+        "source_policy_title": "Vehicle Pursuits",
+        "source_url": "https://www.cityofepa.org/sites/default/files/fileattachments/police/page/8571/306_vehicle_pursuits.pdf",
     },
     {
         "section_id": "3.120",
@@ -268,6 +294,10 @@ POLICY_SECTIONS: list[dict] = [
             "Members separate involved parties, conduct independent statements, verify protective orders, and identify primary aggressor. "
             "Officers document injuries, digital evidence, witness statements, and safety resources provided to victim."
         ),
+        "source_agency": "East Palo Alto Police Department",
+        "source_policy_id": "309",
+        "source_policy_title": "Domestic Violence",
+        "source_url": "https://www.cityofepa.org/sites/default/files/fileattachments/police/page/8571/309._domestic_violence_redacted.pdf",
     },
     {
         "section_id": "3.220",
@@ -279,6 +309,10 @@ POLICY_SECTIONS: list[dict] = [
             "For behavioral crisis events, officers reduce stimulation, slow scene tempo, and request crisis-trained support when available. "
             "Any involuntary hold decision must include clear articulation of risk behaviors and less-restrictive alternatives considered."
         ),
+        "source_agency": "East Palo Alto Police Department",
+        "source_policy_id": "409",
+        "source_policy_title": "Mental Illness Commitments",
+        "source_url": "https://www.cityofepa.org/sites/default/files/fileattachments/police/page/8571/409._mental_illness_commitments.pdf",
     },
     {
         "section_id": "5.130",
@@ -290,6 +324,10 @@ POLICY_SECTIONS: list[dict] = [
             "Body-worn cameras shall be activated for calls for service, stops, searches, arrests, and force incidents unless legally prohibited. "
             "Any delayed activation, interruption, or deactivation must be documented in incident narrative."
         ),
+        "source_agency": "East Palo Alto Police Department",
+        "source_policy_id": "424",
+        "source_policy_title": "Portable Audio/Video Recorders",
+        "source_url": "https://www.cityofepa.org/sites/default/files/fileattachments/police/page/8571/424_portable_audio_video_recorders.pdf",
     },
     {
         "section_id": "6.210",
@@ -301,5 +339,9 @@ POLICY_SECTIONS: list[dict] = [
             "Reports shall distinguish observation from inference, document legal basis for enforcement action, and include a coherent timeline. "
             "Dictated narratives must be reviewed for accuracy before submission. Supervisors may return incomplete reports for correction."
         ),
+        "source_agency": "East Palo Alto Police Department",
+        "source_policy_id": "321",
+        "source_policy_title": "Report Preparation",
+        "source_url": "https://www.cityofepa.org/sites/default/files/fileattachments/police/page/8571/321._report_preparation.pdf",
     },
 ]
