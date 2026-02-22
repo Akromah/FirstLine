@@ -101,11 +101,40 @@ body {
   font-weight: 600;
 }
 
+.module-dock {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.module-btn {
+  border: 1px solid #c7d7ef;
+  border-radius: 999px;
+  background: #f2f7ff;
+  color: #27466f;
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.module-btn.active {
+  border-color: #1f5db1;
+  background: #e7f1ff;
+  color: #1f5db1;
+}
+
 .layout {
   display: grid;
   grid-template-columns: 1fr 320px;
   gap: 12px;
   min-height: calc(100vh - 170px);
+}
+
+.layout.map-focus {
+  grid-template-columns: 1fr;
 }
 
 .card {
@@ -919,7 +948,8 @@ body {
 .dev-actions button,
 .call-actions button,
 .role-option,
-.bottom-nav button {
+.bottom-nav button,
+.module-btn {
   border: 1px solid var(--line-1);
   background: linear-gradient(180deg, #1b3254 0%, #132742 100%);
   color: #dfebff;
@@ -930,7 +960,8 @@ body {
 .dev-actions button:hover,
 .call-actions button:hover,
 .role-option:hover,
-.bottom-nav button:hover {
+.bottom-nav button:hover,
+.module-btn:hover {
   border-color: #5f95ff;
   background: linear-gradient(180deg, #274673 0%, #1a3358 100%);
 }
@@ -942,6 +973,12 @@ body {
 }
 
 .bottom-nav .active {
+  border-color: #79a6ff;
+  color: #f4f8ff;
+  background: linear-gradient(180deg, #305990 0%, #223f68 100%);
+}
+
+.module-btn.active {
   border-color: #79a6ff;
   color: #f4f8ff;
   background: linear-gradient(180deg, #305990 0%, #223f68 100%);

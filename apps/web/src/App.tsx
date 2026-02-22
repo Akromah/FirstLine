@@ -139,6 +139,25 @@ type IncidentDetail = {
   timeline: Array<{ event: string; time: string; unit_id?: string; action?: string; summary?: string }>;
 };
 type ViewMode = "Dispatch" | "Field" | "Report" | "Intel";
+type ModulePanel =
+  | "intake"
+  | "queue"
+  | "priorityRadar"
+  | "fieldOps"
+  | "assignedDeck"
+  | "reportHub"
+  | "intelHub"
+  | "commandDash"
+  | "unitReadiness"
+  | "opTrends"
+  | "reviewQueue"
+  | "reportingMetrics"
+  | "aiOps"
+  | "recommendation"
+  | "disposition"
+  | "mobileControls"
+  | "messaging"
+  | "hotkeys";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
 const MAP_STYLE_URL =
@@ -184,6 +203,7 @@ export default function App() {
   const [started, setStarted] = useState(false);
   const [sessionRole, setSessionRole] = useState("Dispatcher");
   const [viewMode, setViewMode] = useState<ViewMode>("Dispatch");
+  const [activeModule, setActiveModule] = useState<ModulePanel>("queue");
   const [loading, setLoading] = useState(false);
   const [banner, setBanner] = useState("Console initialized.");
 
@@ -368,9 +388,18 @@ export default function App() {
   }, [channelIncidentId]);
 
   useEffect(() => {
-    if (sessionRole === "Officer") setViewMode("Field");
-    if (sessionRole === "Supervisor") setViewMode("Dispatch");
-    if (sessionRole === "Dispatcher") setViewMode("Dispatch");
+    if (sessionRole === "Officer") {
+      setViewMode("Field");
+      setActiveModule("fieldOps");
+    }
+    if (sessionRole === "Supervisor") {
+      setViewMode("Dispatch");
+      setActiveModule("reviewQueue");
+    }
+    if (sessionRole === "Dispatcher") {
+      setViewMode("Dispatch");
+      setActiveModule("queue");
+    }
   }, [sessionRole]);
 
   async function refreshDashboard() {
@@ -1174,6 +1203,46 @@ export default function App() {
   const showField = viewMode === "Field";
   const showReport = viewMode === "Report";
   const showIntel = viewMode === "Intel";
+  const moduleButtons: Array<{ id: ModulePanel; label: string; visible: boolean }> = [
+    { id: "intake", label: "Intake", visible: showDispatch },
+    { id: "queue", label: "Active Queue", visible: showDispatch || showField || showReport },
+    { id: "priorityRadar", label: "Priority Radar", visible: showDispatch || showField },
+    { id: "fieldOps", label: "Field Ops", visible: showField || showDispatch },
+    { id: "assignedDeck", label: "Assigned Deck", visible: showField },
+    { id: "reportHub", label: "Report Hub", visible: showReport || showField || showDispatch },
+    { id: "intelHub", label: "Intel Hub", visible: showIntel || showField || showDispatch },
+    { id: "commandDash", label: "Command", visible: showDispatch || showReport },
+    { id: "unitReadiness", label: "Readiness", visible: showDispatch || showField },
+    { id: "opTrends", label: "Trends", visible: showDispatch || showReport },
+    { id: "reviewQueue", label: "Review Queue", visible: showDispatch || showReport },
+    { id: "reportingMetrics", label: "Report Metrics", visible: showDispatch || showReport },
+    { id: "aiOps", label: "AI Ops", visible: showDispatch || showReport },
+    { id: "recommendation", label: "Recommend", visible: showDispatch },
+    { id: "disposition", label: "Disposition", visible: showDispatch || showField || showReport },
+    { id: "mobileControls", label: "Mobile Controls", visible: showField },
+    { id: "messaging", label: "Messaging", visible: showField || showDispatch },
+    { id: "hotkeys", label: "Hotkeys", visible: true },
+  ];
+  const rightColumnModules: ModulePanel[] = [
+    "commandDash",
+    "unitReadiness",
+    "opTrends",
+    "reviewQueue",
+    "reportingMetrics",
+    "aiOps",
+    "recommendation",
+    "disposition",
+    "mobileControls",
+    "messaging",
+    "hotkeys",
+  ];
+  const rightColumnActive = rightColumnModules.includes(activeModule);
+
+  useEffect(() => {
+    const visibleModules = moduleButtons.filter((item) => item.visible).map((item) => item.id);
+    if (visibleModules.length === 0) return;
+    if (!visibleModules.includes(activeModule)) setActiveModule(visibleModules[0]);
+  }, [viewMode, sessionRole, activeModule]);
 
   if (!started) {
     return (
@@ -1219,9 +1288,22 @@ export default function App() {
         <span className="chip">Priority radar: {priorityBoard?.incidents.filter((item) => item.risk_score >= 80).length ?? 0} high risk</span>
       </div>
 
-      <main className="layout">
+      <section className="module-dock">
+        {moduleButtons.filter((item) => item.visible).map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={`module-btn ${activeModule === item.id ? "active" : ""}`}
+            onClick={() => setActiveModule(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </section>
+
+      <main className={`layout ${rightColumnActive ? "" : "map-focus"}`.trim()}>
         <section className="main-column">
-          {showDispatch ? (
+          {activeModule === "intake" ? (
           <article className="card panel">
             <h2>Smart Call Intake</h2>
             <p className="section-subtitle">Structured intake with geolocation and AI-ready notes.</p>
@@ -1254,7 +1336,6 @@ export default function App() {
           </article>
           ) : null}
 
-          {(showDispatch || showField) ? (
           <article className="card map-card">
             <div className="map-header"><h2>Unified Live Map</h2><p>Live unit status and incident priority overlays.</p></div>
             <div className="toggle-row">
@@ -1273,9 +1354,8 @@ export default function App() {
             </div>
             <div className="map-canvas"><div className="maplibre-map" ref={mapContainerRef} /></div>
           </article>
-          ) : null}
 
-          {(showDispatch || showField || showReport) ? (
+          {activeModule === "queue" ? (
           <article className="card panel">
             <h2>Active Queue</h2>
             <div className="dispatch-form-grid">
@@ -1291,7 +1371,7 @@ export default function App() {
             {filteredQueue.length === 0 ? <div className="dispatch-banner">No incidents match current filters.</div> : null}
           </article>
           ) : null}
-          {(showDispatch || showField) ? (
+          {activeModule === "priorityRadar" ? (
           <article className="card panel">
             <h2>Priority Radar</h2>
             <p className="section-subtitle">Top risk-ranked incidents with safety context.</p>
@@ -1310,7 +1390,7 @@ export default function App() {
             ))}
           </article>
           ) : null}
-          {(showField || showDispatch) ? (
+          {activeModule === "fieldOps" ? (
           <article className="card panel">
             <h2>Field Operations</h2>
             <p className="section-subtitle">
@@ -1341,7 +1421,7 @@ export default function App() {
             </div>
           </article>
           ) : null}
-          {showField ? (
+          {activeModule === "assignedDeck" ? (
           <article className="card panel">
             <h2>Assigned Call Deck</h2>
             <p className="section-subtitle">Keyboard shortcuts: A Accept · E En Route · O On Scene · C Clear</p>
@@ -1361,7 +1441,7 @@ export default function App() {
             ))}
           </article>
           ) : null}
-          {(showReport || showField || showDispatch) ? (
+          {activeModule === "reportHub" ? (
           <article className="card panel">
             <h2>Report Writing Hub</h2>
             <p className="section-subtitle">Incident: <strong>{selectedIncident?.incident_id ?? "None selected"}</strong></p>
@@ -1463,7 +1543,7 @@ export default function App() {
           </article>
           ) : null}
 
-          {(showIntel || showField) ? (
+          {activeModule === "intelHub" ? (
           <article className="card panel">
             <h2>Records and Warrants Hub</h2>
             <div className="search-row">
@@ -1501,8 +1581,8 @@ export default function App() {
           ) : null}
         </section>
 
-        <aside className="right-column">
-          {(showDispatch || showReport) ? (
+        {rightColumnActive ? <aside className="right-column">
+          {activeModule === "commandDash" ? (
           <article className="card panel">
             <h2>Command Dashboard</h2>
             <div className="kpi-grid">
@@ -1513,7 +1593,7 @@ export default function App() {
             </div>
           </article>
           ) : null}
-          {(showDispatch || showField) ? (
+          {activeModule === "unitReadiness" ? (
           <article className="card panel">
             <h2>Unit Readiness Board</h2>
             <p className="section-subtitle">Fatigue and workload guardrail for dispatch decisions.</p>
@@ -1528,7 +1608,7 @@ export default function App() {
             ))}
           </article>
           ) : null}
-          {(showDispatch || showReport) ? (
+          {activeModule === "opTrends" ? (
           <article className="card panel">
             <h2>Operational Trends</h2>
             <p className="section-subtitle">Last {commandTrends?.periods ?? 0} snapshots</p>
@@ -1546,7 +1626,7 @@ export default function App() {
             </div>
           </article>
           ) : null}
-          {(showDispatch || showReport) ? (
+          {activeModule === "reviewQueue" ? (
           <article className="card panel">
             <h2>Supervisor Review Queue</h2>
             <p className="section-subtitle">{reviewQueue?.review_count ?? 0} reports flagged for review</p>
@@ -1575,7 +1655,7 @@ export default function App() {
             {(reviewQueue?.reports ?? []).length === 0 ? <div className="dispatch-banner">No reports currently require supervisor intervention.</div> : null}
           </article>
           ) : null}
-          {(showDispatch || showReport) ? (
+          {activeModule === "reportingMetrics" ? (
           <article className="card panel">
             <h2>Reporting Pipeline Metrics</h2>
             <div className="kpi-grid">
@@ -1590,7 +1670,7 @@ export default function App() {
           </article>
           ) : null}
 
-          {(showDispatch || showReport) ? (
+          {activeModule === "aiOps" ? (
           <article className="card panel">
             <h2>AI Operations Engine</h2>
             <p className="section-subtitle">Incident: {selectedIncident?.incident_id ?? "None selected"}</p>
@@ -1600,7 +1680,7 @@ export default function App() {
           </article>
           ) : null}
 
-          {showDispatch ? (
+          {activeModule === "recommendation" ? (
           <article className="card panel">
             <h2>Recommendation Engine</h2>
             <p className="section-subtitle">Selected incident: <strong>{selectedIncident?.incident_id ?? "None"}</strong></p>
@@ -1614,7 +1694,7 @@ export default function App() {
           </article>
           ) : null}
 
-          {(showDispatch || showField || showReport) ? (
+          {activeModule === "disposition" ? (
           <article className="card panel">
             <h2>Call Disposition</h2>
             <div className="dispatch-form-grid">
@@ -1631,7 +1711,7 @@ export default function App() {
           </article>
           ) : null}
 
-          {showField ? (
+          {activeModule === "mobileControls" ? (
           <article className="card panel">
             <h2>Mobile Officer Controls</h2>
             <div className="dispatch-form-grid">
@@ -1648,7 +1728,7 @@ export default function App() {
           </article>
           ) : null}
 
-          {(showField || showDispatch) ? (
+          {activeModule === "messaging" ? (
           <article className="card panel">
             <h2>Secure Messaging</h2>
             <p className="section-subtitle">Unit {statusUnitId} · Inbox {messageInbox?.message_count ?? 0}</p>
@@ -1695,12 +1775,12 @@ export default function App() {
           </article>
           ) : null}
 
-          <article className="card panel">
+          {activeModule === "hotkeys" ? <article className="card panel">
             <h2>Hotkeys</h2>
             <div className="hub-row"><strong>View Navigation</strong><p>Alt+1 Dispatch · Alt+2 Field · Alt+3 Report · Alt+4 Intel</p></div>
             <div className="hub-row"><strong>Field Actions</strong><p>A Accept · E En Route · O On Scene · C Clear</p></div>
-          </article>
-        </aside>
+          </article> : null}
+        </aside> : null}
       </main>
 
       <nav className="bottom-nav">
