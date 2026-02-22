@@ -38,6 +38,22 @@ type ReportingMetrics = {
   avg_narrative_length: number;
   evidence_attachment_rate: number;
 };
+type ReportReadiness = {
+  incident_id: string;
+  report_id?: string | null;
+  has_disposition: boolean;
+  has_draft: boolean;
+  has_template: boolean;
+  narrative_length: number;
+  narrative_min_chars: number;
+  has_narrative: boolean;
+  evidence_count: number;
+  review_required: boolean;
+  review_status: string;
+  review_complete: boolean;
+  blockers: string[];
+  ready_for_submission: boolean;
+};
 type ReviewQueue = {
   review_count: number;
   reports: Array<{ report_id: string; incident_id: string; unit_id: string; status: string; review_status?: string; review_notes?: string | null; updated_at: string; reasons: string[] }>;
@@ -220,6 +236,7 @@ export default function App() {
   const [reportingMetrics, setReportingMetrics] = useState<ReportingMetrics | null>(null);
   const [reviewQueue, setReviewQueue] = useState<ReviewQueue | null>(null);
   const [incidentDetail, setIncidentDetail] = useState<IncidentDetail | null>(null);
+  const [reportReadiness, setReportReadiness] = useState<ReportReadiness | null>(null);
 
   const [selectedIncidentId, setSelectedIncidentId] = useState("");
   const [queueStatusFilter, setQueueStatusFilter] = useState("ALL");
@@ -583,6 +600,29 @@ export default function App() {
   }, [selectedIncident?.incident_id]);
 
   useEffect(() => {
+    async function loadReportReadiness() {
+      if (!selectedIncident) {
+        setReportReadiness(null);
+        return;
+      }
+      try {
+        const readiness = await fetchJson<ReportReadiness>(
+          `/api/v1/reporting/readiness/${selectedIncident.incident_id}?unit_id=${statusUnitId}`
+        );
+        setReportReadiness(readiness);
+      } catch {
+        setReportReadiness(null);
+      }
+    }
+    loadReportReadiness();
+  }, [
+    selectedIncident?.incident_id,
+    statusUnitId,
+    reportHub?.drafts.length,
+    incidentDetail?.incident?.disposition ? "ready" : "pending",
+  ]);
+
+  useEffect(() => {
     if (!autoSaveEnabled || !selectedIncident || !statusUnitId) return;
     const timer = window.setTimeout(async () => {
       try {
@@ -851,7 +891,14 @@ export default function App() {
     if (!selectedIncident || !statusUnitId) return;
     setLoading(true);
     try {
-      await fetchJson("/api/v1/officer/action", { method: "POST", body: JSON.stringify({ incident_id: selectedIncident.incident_id, unit_id: statusUnitId, action }) });
+      const result = await fetchJson<{ ok: boolean; error?: string }>("/api/v1/officer/action", {
+        method: "POST",
+        body: JSON.stringify({ incident_id: selectedIncident.incident_id, unit_id: statusUnitId, action }),
+      });
+      if (!result.ok) {
+        setBanner(result.error ?? `Officer action blocked: ${action}`);
+        return;
+      }
       setBanner(`Officer action recorded: ${action}`);
       await refreshDashboard();
     } catch (error) {
@@ -1230,7 +1277,6 @@ export default function App() {
     if (action === "CLEAR") setStatusValue("AVAILABLE");
   }
 
-  const dispositionReady = Boolean(incidentDetail?.incident?.disposition);
   const recentTimeline = (incidentDetail?.timeline ?? []).slice(0, 4);
   const showDispatch = viewMode === "Dispatch";
   const showField = viewMode === "Field";
@@ -1246,25 +1292,25 @@ export default function App() {
     messaging: messageInbox?.unread_estimate,
     unitReadiness: unitBoard?.break_recommendations.length,
   };
-  const moduleButtons: Array<{ id: ModulePanel; label: string; visible: boolean; badge?: number }> = [
-    { id: "intake", label: "Intake", visible: showDispatch },
-    { id: "queue", label: "Active Queue", visible: showDispatch || showField || showReport, badge: moduleCounts.queue },
-    { id: "priorityRadar", label: "Priority Radar", visible: showDispatch || showField, badge: moduleCounts.priorityRadar },
-    { id: "fieldOps", label: "Field Ops", visible: showField || showDispatch },
-    { id: "assignedDeck", label: "Assigned Deck", visible: showField, badge: moduleCounts.assignedDeck },
-    { id: "reportHub", label: "Report Hub", visible: showReport || showField || showDispatch, badge: moduleCounts.reportHub },
-    { id: "intelHub", label: "Intel Hub", visible: showIntel || showField || showDispatch },
-    { id: "commandDash", label: "Command", visible: showDispatch || showReport },
-    { id: "unitReadiness", label: "Readiness", visible: showDispatch || showField, badge: moduleCounts.unitReadiness },
-    { id: "opTrends", label: "Trends", visible: showDispatch || showReport },
-    { id: "reviewQueue", label: "Review Queue", visible: showDispatch || showReport, badge: moduleCounts.reviewQueue },
-    { id: "reportingMetrics", label: "Report Metrics", visible: showDispatch || showReport, badge: moduleCounts.reportingMetrics },
-    { id: "aiOps", label: "AI Ops", visible: showDispatch || showReport },
-    { id: "recommendation", label: "Recommend", visible: showDispatch },
-    { id: "disposition", label: "Disposition", visible: showDispatch || showField || showReport },
-    { id: "mobileControls", label: "Mobile Controls", visible: showField },
-    { id: "messaging", label: "Messaging", visible: showField || showDispatch, badge: moduleCounts.messaging },
-    { id: "hotkeys", label: "Hotkeys", visible: true },
+  const moduleButtons: Array<{ id: ModulePanel; label: string; icon: string; visible: boolean; badge?: number }> = [
+    { id: "intake", label: "Intake", icon: "911", visible: showDispatch },
+    { id: "queue", label: "Active Queue", icon: "Q", visible: showDispatch || showField || showReport, badge: moduleCounts.queue },
+    { id: "priorityRadar", label: "Priority Radar", icon: "R", visible: showDispatch || showField, badge: moduleCounts.priorityRadar },
+    { id: "fieldOps", label: "Field Ops", icon: "F", visible: showField || showDispatch },
+    { id: "assignedDeck", label: "Assigned Deck", icon: "A", visible: showField, badge: moduleCounts.assignedDeck },
+    { id: "reportHub", label: "Report Hub", icon: "RP", visible: showReport || showField || showDispatch, badge: moduleCounts.reportHub },
+    { id: "intelHub", label: "Intel Hub", icon: "DB", visible: showIntel || showField || showDispatch },
+    { id: "commandDash", label: "Command", icon: "CMD", visible: showDispatch || showReport },
+    { id: "unitReadiness", label: "Readiness", icon: "U", visible: showDispatch || showField, badge: moduleCounts.unitReadiness },
+    { id: "opTrends", label: "Trends", icon: "T", visible: showDispatch || showReport },
+    { id: "reviewQueue", label: "Review Queue", icon: "RV", visible: showDispatch || showReport, badge: moduleCounts.reviewQueue },
+    { id: "reportingMetrics", label: "Report Metrics", icon: "M", visible: showDispatch || showReport, badge: moduleCounts.reportingMetrics },
+    { id: "aiOps", label: "AI Ops", icon: "AI", visible: showDispatch || showReport },
+    { id: "recommendation", label: "Recommend", icon: "REC", visible: showDispatch },
+    { id: "disposition", label: "Disposition", icon: "FIN", visible: showDispatch || showField || showReport },
+    { id: "mobileControls", label: "Mobile Controls", icon: "MOB", visible: showField },
+    { id: "messaging", label: "Messaging", icon: "MSG", visible: showField || showDispatch, badge: moduleCounts.messaging },
+    { id: "hotkeys", label: "Hotkeys", icon: "HK", visible: true },
   ];
   const rightColumnModules: ModulePanel[] = [
     "commandDash",
@@ -1329,6 +1375,9 @@ export default function App() {
         <span className="chip">Hot zones: {mapData?.hot_zones.length ?? 0}</span>
         <span className="chip">Geofence alerts: {mapData?.geofenced_alerts.filter((item: any) => item.active).length ?? 0}</span>
         <span className="chip">Report drafts: {reportHub?.drafts.length ?? 0}</span>
+        <span className={`chip ${reportReadiness?.ready_for_submission ? "ok" : "warn"}`}>
+          RMS ready: {reportReadiness?.ready_for_submission ? "YES" : "NO"}
+        </span>
         <span className="chip">Supervisor review: {reviewQueue?.review_count ?? 0}</span>
         <span className="chip">Break flags: {unitBoard?.break_recommendations.length ?? 0}</span>
         <span className="chip">Priority radar: {priorityBoard?.incidents.filter((item) => item.risk_score >= 80).length ?? 0} high risk</span>
@@ -1348,6 +1397,7 @@ export default function App() {
             className={`module-btn ${activeModule === item.id ? "active" : ""}`}
             onClick={() => setActiveModule(item.id)}
           >
+            <span className="module-icon">{item.icon}</span>
             {item.label}
             {typeof item.badge === "number" ? <span className="module-count">{item.badge}</span> : null}
           </button>
@@ -1502,6 +1552,27 @@ export default function App() {
           <article className="card panel">
             <h2>Report Writing Hub</h2>
             <p className="section-subtitle">Incident: <strong>{selectedIncident?.incident_id ?? "None selected"}</strong></p>
+            {reportReadiness ? (
+              <div className={`dispatch-banner ${reportReadiness.ready_for_submission ? "success" : "warn"}`}>
+                {reportReadiness.ready_for_submission
+                  ? "Submission checklist complete."
+                  : `Blockers: ${reportReadiness.blockers.join(" | ") || "Resolve report readiness items."}`}
+              </div>
+            ) : null}
+            {reportReadiness ? (
+              <div className="readiness-grid">
+                <div className={`readiness-item ${reportReadiness.has_disposition ? "ok" : "warn"}`}>Disposition {reportReadiness.has_disposition ? "Complete" : "Pending"}</div>
+                <div className={`readiness-item ${reportReadiness.has_draft ? "ok" : "warn"}`}>Draft {reportReadiness.has_draft ? "Saved" : "Missing"}</div>
+                <div className={`readiness-item ${reportReadiness.has_template ? "ok" : "warn"}`}>Template {reportReadiness.has_template ? "Applied" : "Missing"}</div>
+                <div className={`readiness-item ${reportReadiness.has_narrative ? "ok" : "warn"}`}>
+                  Narrative {reportReadiness.narrative_length}/{reportReadiness.narrative_min_chars}
+                </div>
+                <div className={`readiness-item ${reportReadiness.evidence_count > 0 ? "ok" : "warn"}`}>Evidence {reportReadiness.evidence_count}</div>
+                <div className={`readiness-item ${reportReadiness.review_complete ? "ok" : "warn"}`}>
+                  Review {reportReadiness.review_required ? reportReadiness.review_status : "Not required"}
+                </div>
+              </div>
+            ) : null}
             <div className="template-row">
               <label className="form-field">
                 Template
@@ -1574,12 +1645,12 @@ export default function App() {
             </div>
             <div className="button-grid">
               <button type="button" onClick={handleSaveDraft} disabled={loading}>Save Draft</button>
-              <button type="button" onClick={handleGenerateReport} disabled={loading || !dispositionReady}>
+              <button type="button" onClick={handleGenerateReport} disabled={loading || !reportReadiness?.ready_for_submission}>
                 Submit RMS Payload
               </button>
             </div>
-            {!dispositionReady ? (
-              <div className="dispatch-banner">Finalize disposition before final RMS submission.</div>
+            {!reportReadiness?.ready_for_submission ? (
+              <div className="dispatch-banner warn">Submission is locked until checklist blockers are resolved.</div>
             ) : null}
             {reportSummary ? <div className="dispatch-banner">{reportSummary}</div> : null}
             {reportAssist ? <div className="ai-box"><p>{reportAssist.improved_narrative}</p><p>Key points: {reportAssist.key_points.join(" | ")}</p></div> : null}
@@ -1755,6 +1826,13 @@ export default function App() {
           {activeModule === "disposition" ? (
           <article className="card panel">
             <h2>Call Disposition</h2>
+            {reportReadiness ? (
+              <div className={`dispatch-banner ${reportReadiness.has_disposition ? "success" : "warn"}`}>
+                {reportReadiness.has_disposition
+                  ? "Disposition complete. Incident can be cleared when report checklist is complete."
+                  : "Disposition required before CLEAR action and final RMS submission."}
+              </div>
+            ) : null}
             <div className="dispatch-form-grid">
               <label className="form-field">Code<select value={dispositionCode} onChange={(e) => setDispositionCode(e.target.value)}><option value="WARNING_ISSUED">WARNING_ISSUED</option><option value="REPORT_ONLY">REPORT_ONLY</option><option value="ARREST_MADE">ARREST_MADE</option><option value="REFERRED">REFERRED</option><option value="UNFOUNDED">UNFOUNDED</option></select></label>
               <label className="form-field">Unit<select value={statusUnitId} onChange={(e) => setStatusUnitId(e.target.value)}>{units.map((u) => <option key={u.unit_id} value={u.unit_id}>{u.callsign} ({u.unit_id})</option>)}</select></label>
@@ -1764,6 +1842,14 @@ export default function App() {
               <label><input type="checkbox" checked={arrestMade} onChange={(e) => setArrestMade(e.target.checked)} /> Arrest made</label>
               <label><input type="checkbox" checked={citationIssued} onChange={(e) => setCitationIssued(e.target.checked)} /> Citation issued</label>
               <label><input type="checkbox" checked={forceUsed} onChange={(e) => setForceUsed(e.target.checked)} /> Force used</label>
+            </div>
+            <div className="button-grid">
+              <button type="button" onClick={() => setActiveModule("reportHub")} disabled={loading}>
+                Open Report Hub
+              </button>
+              <button type="button" onClick={() => handleOfficerAction("CLEAR")} disabled={loading || !reportReadiness?.has_disposition}>
+                Clear Incident
+              </button>
             </div>
             <div className="dev-actions"><button type="button" onClick={handleFinalizeDisposition} disabled={loading}>Finalize Disposition</button></div>
           </article>
@@ -1836,7 +1922,7 @@ export default function App() {
           {activeModule === "hotkeys" ? <article className="card panel">
             <h2>Hotkeys</h2>
             <div className="hub-row"><strong>View Navigation</strong><p>Alt+1 Dispatch · Alt+2 Field · Alt+3 Report · Alt+4 Intel</p></div>
-            <div className="hub-row"><strong>Field Actions</strong><p>A Accept · E En Route · O On Scene · C Clear</p></div>
+            <div className="hub-row"><strong>Field Actions</strong><p>A Accept · E En Route · O On Scene · C Clear (requires disposition)</p></div>
           </article> : null}
         </aside> : null}
       </main>

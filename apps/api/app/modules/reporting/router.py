@@ -9,6 +9,7 @@ from app.modules.reporting.service import (
     attach_report_evidence,
     apply_report_template,
     build_rms_payload,
+    get_incident_reporting_readiness,
     get_report_draft,
     get_reporting_hub,
     get_reporting_metrics,
@@ -80,3 +81,11 @@ def fetch_draft(report_id: str) -> dict:
     if not draft:
         raise HTTPException(status_code=404, detail="Report draft not found")
     return draft
+
+
+@router.get("/readiness/{incident_id}")
+def incident_reporting_readiness(incident_id: str, unit_id: str | None = None) -> dict:
+    readiness = get_incident_reporting_readiness(incident_id=incident_id, unit_id=unit_id)
+    if not readiness:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return readiness

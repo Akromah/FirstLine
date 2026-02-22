@@ -332,3 +332,63 @@ def get_reporting_metrics() -> dict:
 
 def get_report_draft(report_id: str) -> dict | None:
     return state.get_report_draft(report_id)
+
+
+def get_incident_reporting_readiness(incident_id: str, unit_id: str | None = None) -> dict | None:
+    incident = state.get_incident(incident_id)
+    if not incident:
+        return None
+
+    drafts = state.list_report_drafts(incident_id)
+    draft = None
+    if unit_id:
+        draft = next((item for item in drafts if item["unit_id"] == unit_id), None)
+    if not draft and drafts:
+        draft = drafts[0]
+
+    disposition = incident.get("disposition") or {}
+    has_disposition = bool(incident.get("disposition"))
+    has_draft = bool(draft)
+    has_template = bool(draft and draft.get("template_id"))
+    narrative_min_chars = 120
+    narrative_length = len((draft.get("narrative") or "").strip()) if draft else 0
+    has_narrative = narrative_length >= narrative_min_chars
+    evidence_count = len(draft.get("evidence_links") or []) if draft else 0
+    has_evidence = evidence_count >= 1
+    review_required = bool(has_disposition and disposition.get("requires_supervisor_review"))
+    review_status = (draft.get("review_status") if draft else None) or "PENDING"
+    review_complete = not review_required or review_status == "APPROVED"
+
+    blockers: list[str] = []
+    if not has_disposition:
+        blockers.append("Finalize call disposition.")
+    if not has_draft:
+        blockers.append("Create or save a report draft.")
+    if has_draft and not has_template:
+        blockers.append("Apply a report template.")
+    if has_draft and not has_narrative:
+        blockers.append(f"Expand narrative to at least {narrative_min_chars} characters.")
+    if has_draft and not has_evidence:
+        blockers.append("Attach at least one evidence link.")
+    if review_required and not review_complete:
+        blockers.append("Supervisor approval is required before final submission.")
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "incident_id": incident_id,
+        "unit_id": unit_id,
+        "incident_status": incident["status"],
+        "report_id": draft.get("report_id") if draft else None,
+        "has_disposition": has_disposition,
+        "has_draft": has_draft,
+        "has_template": has_template,
+        "narrative_length": narrative_length,
+        "narrative_min_chars": narrative_min_chars,
+        "has_narrative": has_narrative,
+        "evidence_count": evidence_count,
+        "review_required": review_required,
+        "review_status": review_status,
+        "review_complete": review_complete,
+        "blockers": blockers,
+        "ready_for_submission": len(blockers) == 0,
+    }

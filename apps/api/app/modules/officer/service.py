@@ -56,6 +56,18 @@ def update_status(payload: OfficerStatusUpdate) -> dict:
 
 
 def submit_action(payload: OfficerAction) -> dict:
+    normalized_action = payload.action.strip().upper()
+    incident = state.get_incident(payload.incident_id)
+    if normalized_action in {"CLEAR", "CLEARED"} and incident and not incident.get("disposition"):
+        return {
+            "ok": False,
+            "incident_id": payload.incident_id,
+            "unit_id": payload.unit_id,
+            "action": payload.action,
+            "error": "Finalize disposition before clearing this incident.",
+            "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+
     updated = state.record_officer_action(payload.incident_id, payload.unit_id, payload.action)
     return {
         "ok": updated,
