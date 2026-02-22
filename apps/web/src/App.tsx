@@ -1072,6 +1072,31 @@ export default function App() {
     await runIntelLookup(query);
   }
 
+  function handleExportIncidentPacket() {
+    if (!selectedIncident) return;
+    const payload = {
+      exported_at: new Date().toISOString(),
+      incident: selectedIncident,
+      incident_detail: incidentDetail,
+      risk_profile: riskProfile,
+      ai_assist: aiAssist,
+      report_summary: reportSummary,
+      report_fields: parseFields(reportFields),
+      evidence_links: reportEvidence,
+      channel_messages: incidentChannel?.messages ?? [],
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${selectedIncident.incident_id}-packet.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+    setBanner(`Exported incident packet for ${selectedIncident.incident_id}.`);
+  }
+
   async function handleLoadProfile(personId: string) {
     setLoading(true);
     try {
@@ -1251,6 +1276,7 @@ export default function App() {
             <p className="section-subtitle">
               {selectedIncident?.incident_id ?? "No incident"} · Elapsed {incidentDetail?.elapsed_minutes ?? 0}m
             </p>
+            <div className="dev-actions"><button type="button" onClick={handleExportIncidentPacket} disabled={!selectedIncident}>Export Incident Packet</button></div>
             <div className="dispatch-banner">
               Latest action:{" "}
               {incidentDetail?.latest_action?.action ??
