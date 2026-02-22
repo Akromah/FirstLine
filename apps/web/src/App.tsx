@@ -1074,6 +1074,10 @@ export default function App() {
                 {(lookup?.warrants ?? []).map((warrant) => (
                   <div key={warrant.warrant_id} className="hub-row"><strong>{warrant.warrant_id} - {warrant.severity}</strong><p>{warrant.subject_name}</p></div>
                 ))}
+                <h3>Firearms Registry</h3>
+                {(lookup?.firearms ?? []).map((entry) => (
+                  <div key={entry.registration_id} className="hub-row"><strong>{entry.registration_id} - {entry.weapon_type}</strong><p>{entry.owner_name} · {entry.status}</p></div>
+                ))}
               </div>
             </div>
             {profile ? <div className="profile-card"><strong>Profile - {profile.person.full_name} ({profile.person.person_id})</strong><p>Address: {profile.person.address}</p><p>Safety flags: {profile.officer_safety_flags.join(", ") || "None"}</p></div> : null}
