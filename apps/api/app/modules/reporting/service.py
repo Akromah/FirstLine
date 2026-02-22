@@ -71,6 +71,13 @@ class ReportTemplateApplyRequest(BaseModel):
     include_timeline: bool = True
 
 
+class ReportEvidenceRequest(BaseModel):
+    incident_id: str
+    unit_id: str
+    evidence_type: str
+    uri: str
+
+
 def _find_template(template_id: str) -> dict[str, Any]:
     normalized = template_id.strip().upper()
     for item in TEMPLATE_LIBRARY:
@@ -177,6 +184,10 @@ def build_rms_payload(payload: ReportCreateRequest) -> dict:
     if len(payload.narrative.strip()) < 80:
         warnings.append("Narrative appears short and may need additional detail.")
 
+    evidence_links = draft.get("evidence_links") or [
+        {"type": "photo", "uri": f"evidence://incidents/{payload.incident_id}/photo-1"}
+    ]
+
     return {
         "incident_id": payload.incident_id,
         "unit_id": payload.unit_id,
@@ -198,9 +209,7 @@ def build_rms_payload(payload: ReportCreateRequest) -> dict:
             "requires_supervisor_review": bool(disposition and disposition.get("requires_supervisor_review")),
             "warnings": warnings,
         },
-        "evidence_links": [
-            {"type": "photo", "uri": f"evidence://incidents/{payload.incident_id}/photo-1"},
-        ],
+        "evidence_links": evidence_links,
     }
 
 
@@ -218,6 +227,22 @@ def save_report_draft(payload: ReportDraftRequest) -> dict:
 
 def get_reporting_hub() -> dict:
     return state.build_reporting_hub()
+
+
+def attach_report_evidence(payload: ReportEvidenceRequest) -> dict:
+    draft = state.add_report_evidence(
+        incident_id=payload.incident_id,
+        unit_id=payload.unit_id,
+        evidence_type=payload.evidence_type,
+        uri=payload.uri,
+    )
+    return {
+        "report_id": draft["report_id"],
+        "incident_id": draft["incident_id"],
+        "unit_id": draft["unit_id"],
+        "evidence_links": draft.get("evidence_links", []),
+        "updated_at": draft["updated_at"],
+    }
 
 
 def get_supervisor_review_queue() -> dict:

@@ -432,6 +432,7 @@ class InMemoryState:
                 existing["structured_fields"] = structured_fields
                 existing["template_id"] = template_id
                 existing["report_meta"] = report_meta or existing.get("report_meta") or {}
+                existing["evidence_links"] = existing.get("evidence_links", [])
                 existing["status"] = status
                 existing["updated_at"] = now
                 report_id = existing["report_id"]
@@ -445,6 +446,7 @@ class InMemoryState:
                     "structured_fields": structured_fields,
                     "template_id": template_id,
                     "report_meta": report_meta or {},
+                    "evidence_links": [],
                     "status": status,
                     "created_at": now,
                     "updated_at": now,
@@ -458,6 +460,53 @@ class InMemoryState:
                 }
             )
             return self._report_drafts[report_id].copy()
+
+    def add_report_evidence(
+        self,
+        incident_id: str,
+        unit_id: str,
+        evidence_type: str,
+        uri: str,
+    ) -> dict:
+        with self._lock:
+            target = None
+            for draft in self._report_drafts.values():
+                if draft["incident_id"] == incident_id and draft["unit_id"] == unit_id:
+                    target = draft
+                    break
+
+            if not target:
+                target = self.upsert_report_draft(
+                    incident_id=incident_id,
+                    unit_id=unit_id,
+                    narrative="",
+                    structured_fields={},
+                    template_id=None,
+                    report_meta={},
+                    status="DRAFT",
+                )
+                target = self._report_drafts[target["report_id"]]
+
+            now = utc_now_iso()
+            evidence_links = target.setdefault("evidence_links", [])
+            evidence_links.append(
+                {
+                    "type": evidence_type,
+                    "uri": uri,
+                    "added_at": now,
+                }
+            )
+            target["updated_at"] = now
+            self._incidents.get(incident_id, {}).get("timeline", []).append(
+                {
+                    "event": "evidence_attached",
+                    "time": now,
+                    "unit_id": unit_id,
+                    "type": evidence_type,
+                    "uri": uri,
+                }
+            )
+            return target.copy()
 
     def get_report_draft(self, report_id: str) -> dict | None:
         with self._lock:

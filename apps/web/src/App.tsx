@@ -5,7 +5,15 @@ import maplibregl from "maplibre-gl";
 type Coordinates = { lat: number; lon: number };
 type IncidentSummary = { incident_id: string; call_type: string; priority: number; address: string; coordinates: Coordinates; status: string };
 type UnitSummary = { unit_id: string; callsign: string; status: string; coordinates: Coordinates; skills: string[]; workload_score: number; fatigue_score: number };
-type ReportDraft = { report_id: string; incident_id: string; unit_id: string; narrative: string; status: string; updated_at: string };
+type ReportDraft = {
+  report_id: string;
+  incident_id: string;
+  unit_id: string;
+  narrative: string;
+  status: string;
+  updated_at: string;
+  evidence_links?: Array<{ type: string; uri: string; added_at?: string }>;
+};
 type ReportingHub = { drafts: ReportDraft[]; missing_reports: Array<{ incident_id: string; call_type: string; priority: number }> };
 type ReviewQueue = {
   review_count: number;
@@ -167,6 +175,9 @@ export default function App() {
   const [selectedTemplateId, setSelectedTemplateId] = useState("GENERAL_INCIDENT");
   const [reportTone, setReportTone] = useState("professional");
   const [reportAssist, setReportAssist] = useState<AIReportAssist | null>(null);
+  const [reportEvidenceType, setReportEvidenceType] = useState("photo");
+  const [reportEvidenceUri, setReportEvidenceUri] = useState("");
+  const [reportEvidence, setReportEvidence] = useState<Array<{ type: string; uri: string; added_at?: string }>>([]);
   const [dictationSegments, setDictationSegments] = useState(0);
   const [dictationSeconds, setDictationSeconds] = useState(0);
   const [dictationSupported, setDictationSupported] = useState(false);
@@ -329,6 +340,17 @@ export default function App() {
     if (!selectedIncident) return;
     setReportNarrative(`Incident ${selectedIncident.incident_id}: ${selectedIncident.call_type} at ${selectedIncident.address}.`);
   }, [selectedIncident?.incident_id]);
+
+  useEffect(() => {
+    if (!selectedIncident || !reportHub) {
+      setReportEvidence([]);
+      return;
+    }
+    const related = reportHub.drafts.find(
+      (draft) => draft.incident_id === selectedIncident.incident_id && draft.unit_id === statusUnitId
+    );
+    setReportEvidence(related?.evidence_links ?? []);
+  }, [reportHub, selectedIncident?.incident_id, statusUnitId]);
 
   useEffect(() => {
     async function loadDetail() {
@@ -603,6 +625,30 @@ export default function App() {
       await refreshDashboard();
     } catch (error) {
       setBanner(`RMS export failed: ${(error as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleAttachEvidence() {
+    if (!selectedIncident || !statusUnitId || !reportEvidenceUri.trim()) return;
+    setLoading(true);
+    try {
+      const payload = await fetchJson<{ evidence_links: Array<{ type: string; uri: string; added_at?: string }> }>("/api/v1/reporting/evidence", {
+        method: "POST",
+        body: JSON.stringify({
+          incident_id: selectedIncident.incident_id,
+          unit_id: statusUnitId,
+          evidence_type: reportEvidenceType,
+          uri: reportEvidenceUri.trim(),
+        }),
+      });
+      setReportEvidence(payload.evidence_links);
+      setReportEvidenceUri("");
+      setReportSummary(`Evidence linked (${payload.evidence_links.length} items).`);
+      await refreshDashboard();
+    } catch (error) {
+      setBanner(`Evidence link failed: ${(error as Error).message}`);
     } finally {
       setLoading(false);
     }
@@ -960,6 +1006,20 @@ export default function App() {
               <div className={`dictation-status ${isDictating ? "live" : ""}`}>{dictationStatus}</div>
               <div className="dictation-preview">Segments: {dictationSegments} · Total capture: {dictationSeconds}s</div>
               {dictationInterim ? <div className="dictation-preview">{dictationInterim}</div> : null}
+            </div>
+            <div className="dispatch-form-grid">
+              <label className="form-field">Evidence Type<select value={reportEvidenceType} onChange={(e) => setReportEvidenceType(e.target.value)}><option value="photo">photo</option><option value="video">video</option><option value="bodycam">bodycam</option><option value="document">document</option></select></label>
+              <label className="form-field">Evidence URI<input value={reportEvidenceUri} onChange={(e) => setReportEvidenceUri(e.target.value)} placeholder="evidence://incidents/... or secure https://..." /></label>
+            </div>
+            <div className="dev-actions"><button type="button" onClick={handleAttachEvidence} disabled={loading || !reportEvidenceUri.trim()}>Attach Evidence Link</button></div>
+            <div className="timeline-list">
+              {reportEvidence.slice(0, 4).map((item, idx) => (
+                <div key={`${item.uri}-${idx}`} className="timeline-item">
+                  <strong>{item.type}</strong>
+                  <p>{item.uri}</p>
+                  <p>{item.added_at ?? ""}</p>
+                </div>
+              ))}
             </div>
             <div className="dispatch-form-grid">
               <label className="form-field wide">Narrative Draft<textarea value={reportNarrative} onChange={(e) => setReportNarrative(e.target.value)} /></label>

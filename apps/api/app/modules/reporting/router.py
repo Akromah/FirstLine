@@ -3,7 +3,9 @@ from fastapi import APIRouter, HTTPException
 from app.modules.reporting.service import (
     ReportCreateRequest,
     ReportDraftRequest,
+    ReportEvidenceRequest,
     ReportTemplateApplyRequest,
+    attach_report_evidence,
     apply_report_template,
     build_rms_payload,
     get_report_draft,
@@ -34,6 +36,11 @@ def supervisor_review_queue() -> dict:
 @router.post("/draft")
 def create_or_update_draft(payload: ReportDraftRequest) -> dict:
     return save_report_draft(payload)
+
+
+@router.post("/evidence")
+def add_report_evidence(payload: ReportEvidenceRequest) -> dict:
+    return attach_report_evidence(payload)
 
 
 @router.get("/templates")

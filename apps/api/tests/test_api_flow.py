@@ -135,6 +135,18 @@ def test_intake_dispatch_reporting_flow() -> None:
     assert apply_template_response.status_code == 200
     assert "Incident" in apply_template_response.json()["narrative"]
 
+    evidence_response = client.post(
+        "/api/v1/reporting/evidence",
+        json={
+            "incident_id": incident_id,
+            "unit_id": assignment_payload["recommended_unit_id"],
+            "evidence_type": "photo",
+            "uri": "evidence://incidents/test/photo-88",
+        },
+    )
+    assert evidence_response.status_code == 200
+    assert len(evidence_response.json()["evidence_links"]) >= 1
+
     hub_response = client.get("/api/v1/reporting/hub")
     assert hub_response.status_code == 200
     hub_payload = hub_response.json()
@@ -176,6 +188,7 @@ def test_intake_dispatch_reporting_flow() -> None:
     fetch_draft_response = client.get(f"/api/v1/reporting/draft/{report_id}")
     assert fetch_draft_response.status_code == 200
     assert fetch_draft_response.json()["status"] in {"DRAFT", "SUBMITTED"}
+    assert len(fetch_draft_response.json().get("evidence_links", [])) >= 1
 
     disposition_response = client.post(
         "/api/v1/dispatch/disposition",
