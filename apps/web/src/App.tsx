@@ -3,7 +3,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Coordinates = { lat: number; lon: number };
 type IncidentSummary = { incident_id: string; call_type: string; priority: number; address: string; coordinates: Coordinates; status: string };
-type UnitSummary = { unit_id: string; callsign: string; status: string; coordinates: Coordinates; skills: string[]; workload_score: number; fatigue_score: number };
+type UnitSummary = { unit_id: string; callsign: string; officer_name?: string | null; status: string; coordinates: Coordinates; skills: string[]; workload_score: number; fatigue_score: number };
 type UnitReadiness = {
   unit_id: string;
   callsign: string;
@@ -16,6 +16,34 @@ type UnitReadiness = {
   requires_break: boolean;
 };
 type UnitBoard = { units: UnitReadiness[]; break_recommendations: string[] };
+type UnitAvailabilityBoard = {
+  summary: { available_count: number; unavailable_count: number; active_assignments: number };
+  available_units: Array<{
+    unit_id: string;
+    callsign: string;
+    officer_name: string;
+    status_code: string;
+    current_location: string;
+    skills: string[];
+    workload_score: number;
+    fatigue_score: number;
+  }>;
+  unavailable_units: Array<{
+    unit_id: string;
+    callsign: string;
+    officer_name: string;
+    status_code: string;
+    current_location: string;
+    skills: string[];
+    incident_id?: string | null;
+    call_type: string;
+    incident_status: string;
+    predicted_eta_minutes?: number | null;
+    last_action: string;
+    disposition_code?: string | null;
+    disposition_summary?: string | null;
+  }>;
+};
 type PriorityRadar = {
   count: number;
   incidents: Array<{ incident_id: string; call_type: string; priority: number; status: string; address: string; risk_score: number; safety_alerts: string[] }>;
@@ -277,6 +305,7 @@ export default function App() {
   const [command, setCommand] = useState<any>(null);
   const [commandTrends, setCommandTrends] = useState<CommandTrends | null>(null);
   const [unitBoard, setUnitBoard] = useState<UnitBoard | null>(null);
+  const [availabilityBoard, setAvailabilityBoard] = useState<UnitAvailabilityBoard | null>(null);
   const [priorityBoard, setPriorityBoard] = useState<PriorityRadar | null>(null);
   const [mapData, setMapData] = useState<any>(null);
   const [mapReady, setMapReady] = useState(false);
@@ -322,6 +351,9 @@ export default function App() {
   const [lon, setLon] = useState("-117.1825");
   const [callText, setCallText] = useState("Neighbors reporting loud domestic dispute, possible weapon.");
   const [demoScenario, setDemoScenario] = useState("SHIFT_START");
+  const [mockUnitsCount, setMockUnitsCount] = useState(14);
+  const [mockIncidentsCount, setMockIncidentsCount] = useState(18);
+  const [mockClearExisting, setMockClearExisting] = useState(false);
 
   const [dispositionCode, setDispositionCode] = useState("WARNING_ISSUED");
   const [dispositionSummary, setDispositionSummary] = useState("Scene stabilized and verbal warning issued.");
@@ -505,10 +537,11 @@ export default function App() {
       const channelPromise = selectedIncidentIdRef.current
         ? fetchJson<IncidentChannel>(`/api/v1/officer/channel/${selectedIncidentIdRef.current}?limit=10`).catch(() => null)
         : Promise.resolve(null);
-      const [q, u, ub, pb, c, ct, m, h, rm, rq, inbox, feed, channel] = await Promise.all([
+      const [q, u, ub, ab, pb, c, ct, m, h, rm, rq, inbox, feed, channel] = await Promise.all([
         fetchJson<{ incidents: IncidentSummary[] }>("/api/v1/dispatch/queue"),
         fetchJson<{ units: UnitSummary[] }>("/api/v1/dispatch/units"),
         fetchJson<UnitBoard>("/api/v1/dispatch/unit-board"),
+        fetchJson<UnitAvailabilityBoard>("/api/v1/dispatch/availability-board"),
         fetchJson<PriorityRadar>("/api/v1/dispatch/priority-board?limit=6"),
         fetchJson<any>("/api/v1/command/overview"),
         fetchJson<CommandTrends>("/api/v1/command/trends?periods=6"),
@@ -523,6 +556,7 @@ export default function App() {
       setQueue(q.incidents);
       setUnits(u.units);
       setUnitBoard(ub);
+      setAvailabilityBoard(ab);
       setPriorityBoard(pb);
       setCommand(c);
       setCommandTrends(ct);
@@ -950,6 +984,33 @@ export default function App() {
       await refreshDashboard();
     } catch (error) {
       setBanner(`Demo scenario failed: ${(error as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleGenerateMockData() {
+    setLoading(true);
+    try {
+      const result = await fetchJson<{
+        units_created: number;
+        incidents_created: number;
+        assigned_incidents: number;
+      }>("/api/v1/intake/mock-seed", {
+        method: "POST",
+        body: JSON.stringify({
+          units_count: mockUnitsCount,
+          incidents_count: mockIncidentsCount,
+          clear_existing: mockClearExisting,
+          auto_assign: true,
+        }),
+      });
+      setBanner(
+        `Mock dataset generated: ${result.units_created} units, ${result.incidents_created} incidents, ${result.assigned_incidents} assigned.`
+      );
+      await refreshDashboard();
+    } catch (error) {
+      setBanner(`Mock seed failed: ${(error as Error).message}`);
     } finally {
       setLoading(false);
     }
@@ -1522,7 +1583,7 @@ export default function App() {
     reviewQueue: reviewQueue?.review_count,
     reportingMetrics: reportingMetrics?.changes_requested,
     messaging: messageInbox?.unread_estimate,
-    unitReadiness: unitBoard?.break_recommendations.length,
+    unitReadiness: availabilityBoard?.summary.unavailable_count,
   };
   const moduleButtons: Array<{ id: ModulePanel; label: string; icon: string; visible: boolean; badge?: number }> = [
     { id: "mapOnly", label: "Map Only", icon: "MAP", visible: true },
@@ -1534,7 +1595,7 @@ export default function App() {
     { id: "reportHub", label: "Report Hub", icon: "RP", visible: showReport || showField || showDispatch, badge: moduleCounts.reportHub },
     { id: "intelHub", label: "Intel Hub", icon: "DB", visible: showIntel || showField || showDispatch },
     { id: "commandDash", label: "Command", icon: "CMD", visible: showDispatch || showReport },
-    { id: "unitReadiness", label: "Readiness", icon: "U", visible: showDispatch || showField, badge: moduleCounts.unitReadiness },
+    { id: "unitReadiness", label: "Unit Board", icon: "U", visible: showDispatch || showField, badge: moduleCounts.unitReadiness },
     { id: "opTrends", label: "Trends", icon: "T", visible: showDispatch || showReport },
     { id: "reviewQueue", label: "Review Queue", icon: "RV", visible: showDispatch || showReport, badge: moduleCounts.reviewQueue },
     { id: "reportingMetrics", label: "Report Metrics", icon: "M", visible: showDispatch || showReport, badge: moduleCounts.reportingMetrics },
@@ -1663,6 +1724,8 @@ export default function App() {
         <span className="chip">Traffic: {mapData?.traffic_overlay ?? "n/a"}</span>
         <span className="chip">Hot zones: {mapData?.hot_zones.length ?? 0}</span>
         <span className="chip">Geofence alerts: {mapData?.geofenced_alerts.filter((item: any) => item.active).length ?? 0}</span>
+        <span className="chip">Units available: {availabilityBoard?.summary.available_count ?? 0}</span>
+        <span className="chip">Units unavailable: {availabilityBoard?.summary.unavailable_count ?? 0}</span>
         <span className="chip">Report drafts: {reportHub?.drafts.length ?? 0}</span>
         <span className={`chip ${reportReadiness?.ready_for_submission ? "ok" : "warn"}`}>
           RMS ready: {reportReadiness?.ready_for_submission ? "YES" : "NO"}
@@ -1724,6 +1787,43 @@ export default function App() {
                   Launch Scenario
                 </button>
               </div>
+            </div>
+            <div className="template-row">
+              <label className="form-field">
+                Mock Units
+                <input
+                  type="number"
+                  min={4}
+                  max={40}
+                  value={mockUnitsCount}
+                  onChange={(e) => setMockUnitsCount(Math.max(4, Math.min(40, Number(e.target.value) || 4)))}
+                />
+              </label>
+              <label className="form-field">
+                Mock Incidents
+                <input
+                  type="number"
+                  min={4}
+                  max={120}
+                  value={mockIncidentsCount}
+                  onChange={(e) => setMockIncidentsCount(Math.max(4, Math.min(120, Number(e.target.value) || 4)))}
+                />
+              </label>
+            </div>
+            <div className="toggle-row">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={mockClearExisting}
+                  onChange={(e) => setMockClearExisting(e.target.checked)}
+                />
+                Replace existing active dataset
+              </label>
+            </div>
+            <div className="dev-actions">
+              <button type="button" onClick={handleGenerateMockData} disabled={loading}>
+                Generate Mock Units + Calls
+              </button>
             </div>
             <div className="dispatch-banner">{banner}</div>
           </article>
@@ -2112,15 +2212,54 @@ export default function App() {
           ) : null}
           {activeModule === "unitReadiness" ? (
           <article className="card panel">
-            <h2>Unit Readiness Board</h2>
-            <p className="section-subtitle">Fatigue and workload guardrail for dispatch decisions.</p>
-            {(unitBoard?.units ?? []).slice(0, 5).map((unit) => (
+            <h2>Unit Availability Board</h2>
+            <p className="section-subtitle">Available units and active dispositions for unavailable units.</p>
+            <div className="kpi-grid">
+              <div className="kpi"><span>Available</span><strong>{availabilityBoard?.summary.available_count ?? 0}</strong></div>
+              <div className="kpi"><span>Unavailable</span><strong>{availabilityBoard?.summary.unavailable_count ?? 0}</strong></div>
+              <div className="kpi"><span>Active Assignments</span><strong>{availabilityBoard?.summary.active_assignments ?? 0}</strong></div>
+              <div className="kpi"><span>Break Flags</span><strong>{unitBoard?.break_recommendations.length ?? 0}</strong></div>
+            </div>
+            <div className="hub-grid">
+              <div className="hub-col">
+                <h3>Available Units</h3>
+                {(availabilityBoard?.available_units ?? []).slice(0, 10).map((unit) => (
+                  <div key={unit.unit_id} className="hub-row">
+                    <strong>{unit.callsign} · {unit.officer_name}</strong>
+                    <p>{unit.unit_id} · {unit.status_code}</p>
+                    <p>Location: {unit.current_location}</p>
+                    <p>Skills: {unit.skills.join(", ") || "n/a"}</p>
+                  </div>
+                ))}
+                {(availabilityBoard?.available_units ?? []).length === 0 ? <div className="dispatch-banner">No units currently available.</div> : null}
+              </div>
+              <div className="hub-col">
+                <h3>Unavailable Unit Dispositions</h3>
+                {(availabilityBoard?.unavailable_units ?? []).slice(0, 10).map((unit) => (
+                  <div key={unit.unit_id} className="hub-row">
+                    <strong>{unit.callsign} · {unit.officer_name}</strong>
+                    <p>Status code: {unit.status_code} · Incident status: {unit.incident_status}</p>
+                    <p>{unit.call_type} · {unit.current_location}</p>
+                    <p>
+                      {unit.incident_id ? `Incident ${unit.incident_id}` : "No active incident"} · Last action {unit.last_action}
+                      {unit.predicted_eta_minutes ? ` · ETA ${unit.predicted_eta_minutes}m` : ""}
+                    </p>
+                    <p>
+                      Disposition: {unit.disposition_code ?? "Pending"}
+                      {unit.disposition_summary ? ` · ${unit.disposition_summary}` : ""}
+                    </p>
+                  </div>
+                ))}
+                {(availabilityBoard?.unavailable_units ?? []).length === 0 ? <div className="dispatch-banner">No units currently unavailable.</div> : null}
+              </div>
+            </div>
+            <h2>Readiness Ranking</h2>
+            {(unitBoard?.units ?? []).slice(0, 6).map((unit) => (
               <div key={unit.unit_id} className="hub-row">
                 <strong>{unit.callsign} · {unit.status}</strong>
                 <p>{unit.unit_id} · Assignments {unit.active_assignments} · Fatigue {unit.fatigue_score} · Workload {unit.workload_score}</p>
                 <div className="readiness-bar"><div className={`readiness-fill ${unit.requires_break ? "risk" : ""}`} style={{ width: `${unit.readiness_score}%` }} /></div>
                 <p>Readiness {unit.readiness_score}/100 · {unit.requires_break ? "Break recommended" : "Operational"}</p>
-                <p>Skills: {unit.skills.join(", ")}</p>
               </div>
             ))}
           </article>

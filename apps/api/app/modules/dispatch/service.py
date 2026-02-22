@@ -235,3 +235,89 @@ def build_priority_radar(limit: int = 8) -> dict:
         "count": len(capped),
         "incidents": capped,
     }
+
+
+def _latest_unit_event(incident: dict) -> str:
+    timeline = incident.get("timeline", [])
+    for event in reversed(timeline):
+        if event.get("event") == "officer_action":
+            action = event.get("action")
+            if action:
+                return str(action)
+        if event.get("event") == "unit_assigned":
+            return "DISPATCHED"
+        if event.get("event") == "disposition_finalized":
+            return "DISPOSITION_FINALIZED"
+    return "NO_ACTIVITY"
+
+
+def build_unit_status_board() -> dict:
+    units = get_live_units()
+    available_units: list[dict] = []
+    unavailable_units: list[dict] = []
+
+    for unit in units:
+        assignments = state.get_assigned_incidents_for_unit(unit.unit_id)
+        active_incident = assignments[0] if assignments else None
+        current_location = (
+            active_incident["address"]
+            if active_incident
+            else f"{unit.coordinates.lat:.4f}, {unit.coordinates.lon:.4f}"
+        )
+        base = {
+            "unit_id": unit.unit_id,
+            "callsign": unit.callsign,
+            "officer_name": unit.officer_name or "Unassigned",
+            "status_code": unit.status,
+            "skills": unit.skills,
+            "workload_score": unit.workload_score,
+            "fatigue_score": unit.fatigue_score,
+            "current_location": current_location,
+        }
+
+        if unit.status == "AVAILABLE":
+            available_units.append(base)
+            continue
+
+        if active_incident:
+            unavailable_units.append(
+                {
+                    **base,
+                    "incident_id": active_incident["incident_id"],
+                    "call_type": active_incident["call_type"],
+                    "incident_status": active_incident["status"],
+                    "predicted_eta_minutes": active_incident.get("predicted_eta_minutes"),
+                    "last_action": _latest_unit_event(active_incident),
+                    "disposition_code": (active_incident.get("disposition") or {}).get("disposition_code"),
+                    "disposition_summary": (active_incident.get("disposition") or {}).get("summary"),
+                }
+            )
+        else:
+            unavailable_units.append(
+                {
+                    **base,
+                    "incident_id": None,
+                    "call_type": "No active CAD incident",
+                    "incident_status": unit.status,
+                    "predicted_eta_minutes": None,
+                    "last_action": "STATUS_ONLY",
+                    "disposition_code": None,
+                    "disposition_summary": None,
+                }
+            )
+
+    available_units.sort(key=lambda row: row["callsign"])
+    unavailable_units.sort(
+        key=lambda row: (0 if row.get("incident_id") else 1, row["status_code"], row["callsign"])
+    )
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "summary": {
+            "available_count": len(available_units),
+            "unavailable_count": len(unavailable_units),
+            "active_assignments": len([row for row in unavailable_units if row.get("incident_id")]),
+        },
+        "available_units": available_units,
+        "unavailable_units": unavailable_units,
+    }

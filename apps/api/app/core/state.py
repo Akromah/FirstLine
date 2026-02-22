@@ -25,6 +25,7 @@ class InMemoryState:
             "u-201": UnitSummary(
                 unit_id="u-201",
                 callsign="2A21",
+                officer_name="Sgt. Elena Ruiz",
                 status="AVAILABLE",
                 coordinates={"lat": 34.0567, "lon": -117.1956},
                 skills=["Spanish", "Crisis"],
@@ -34,6 +35,7 @@ class InMemoryState:
             "u-507": UnitSummary(
                 unit_id="u-507",
                 callsign="5L07",
+                officer_name="Ofc. Marcus Lane",
                 status="EN_ROUTE",
                 coordinates={"lat": 34.0489, "lon": -117.1848},
                 skills=["K9"],
@@ -43,6 +45,7 @@ class InMemoryState:
             "u-310": UnitSummary(
                 unit_id="u-310",
                 callsign="3S10",
+                officer_name="Ofc. Daniel Kim",
                 status="AVAILABLE",
                 coordinates={"lat": 34.0624, "lon": -117.1702},
                 skills=["SWAT", "Spanish"],
@@ -52,6 +55,7 @@ class InMemoryState:
             "u-404": UnitSummary(
                 unit_id="u-404",
                 callsign="4R04",
+                officer_name="Ofc. Priya Shah",
                 status="AVAILABLE",
                 coordinates={"lat": 34.0518, "lon": -117.1629},
                 skills=["Medical", "Crisis"],
@@ -188,6 +192,21 @@ class InMemoryState:
                 return False
             unit.status = status
             return True
+
+    def upsert_unit(self, unit: UnitSummary) -> UnitSummary:
+        with self._lock:
+            self._units[unit.unit_id] = unit.model_copy(deep=True)
+            return self._units[unit.unit_id].model_copy(deep=True)
+
+    def clear_operational_state(self, clear_units: bool = False) -> None:
+        with self._lock:
+            self._incidents = {}
+            self._messages = []
+            self._handoff_notes = {}
+            self._report_drafts = {}
+            self._command_history = []
+            if clear_units:
+                self._units = {}
 
     def find_duplicate_incidents(self, normalized_address: str) -> list[str]:
         with self._lock:

@@ -4,6 +4,8 @@ from app.modules.intake.service import (
     DemoScenarioRequest,
     IntakeRequest,
     IntakeResponse,
+    MockSeedRequest,
+    generate_mock_data,
     get_incident_risk_profile,
     launch_demo_scenario,
     process_intake,
@@ -28,3 +30,8 @@ def get_risk_profile(incident_id: str) -> dict:
 @router.post("/demo")
 def run_demo_scenario(payload: DemoScenarioRequest) -> dict:
     return launch_demo_scenario(payload)
+
+
+@router.post("/mock-seed")
+def seed_mock_dataset(payload: MockSeedRequest) -> dict:
+    return generate_mock_data(payload)

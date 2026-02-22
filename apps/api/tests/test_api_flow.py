@@ -35,6 +35,12 @@ def test_intake_dispatch_reporting_flow() -> None:
     assert unit_board_response.status_code == 200
     assert len(unit_board_response.json()["units"]) >= 1
 
+    availability_board_response = client.get("/api/v1/dispatch/availability-board")
+    assert availability_board_response.status_code == 200
+    availability_payload = availability_board_response.json()
+    assert "available_units" in availability_payload
+    assert "unavailable_units" in availability_payload
+
     priority_board_response = client.get("/api/v1/dispatch/priority-board", params={"limit": 5})
     assert priority_board_response.status_code == 200
     assert priority_board_response.json()["count"] >= 1
@@ -355,3 +361,17 @@ def test_intake_dispatch_reporting_flow() -> None:
     queue_after_close = client.get("/api/v1/dispatch/queue")
     assert queue_after_close.status_code == 200
     assert all(item["incident_id"] != incident_id for item in queue_after_close.json()["incidents"])
+
+    mock_seed_response = client.post(
+        "/api/v1/intake/mock-seed",
+        json={
+            "units_count": 8,
+            "incidents_count": 10,
+            "clear_existing": False,
+            "auto_assign": True,
+        },
+    )
+    assert mock_seed_response.status_code == 200
+    mock_seed_payload = mock_seed_response.json()
+    assert mock_seed_payload["units_created"] >= 8
+    assert mock_seed_payload["incidents_created"] >= 10
