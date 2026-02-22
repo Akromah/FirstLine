@@ -9,6 +9,7 @@ from app.modules.reporting.service import (
     get_report_draft,
     get_reporting_hub,
     get_report_templates,
+    get_supervisor_review_queue,
     save_report_draft,
 )
 
@@ -23,6 +24,11 @@ def export_to_rms(payload: ReportCreateRequest) -> dict:
 @router.get("/hub")
 def reporting_hub() -> dict:
     return get_reporting_hub()
+
+
+@router.get("/review-queue")
+def supervisor_review_queue() -> dict:
+    return get_supervisor_review_queue()
 
 
 @router.post("/draft")

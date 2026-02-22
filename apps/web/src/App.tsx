@@ -7,6 +7,10 @@ type IncidentSummary = { incident_id: string; call_type: string; priority: numbe
 type UnitSummary = { unit_id: string; callsign: string; status: string; coordinates: Coordinates; skills: string[]; workload_score: number; fatigue_score: number };
 type ReportDraft = { report_id: string; incident_id: string; unit_id: string; narrative: string; status: string; updated_at: string };
 type ReportingHub = { drafts: ReportDraft[]; missing_reports: Array<{ incident_id: string; call_type: string; priority: number }> };
+type ReviewQueue = {
+  review_count: number;
+  reports: Array<{ report_id: string; incident_id: string; unit_id: string; status: string; updated_at: string; reasons: string[] }>;
+};
 
 type LookupResult = {
   records: Array<{ person_id: string; full_name: string; address: string; flags: string[] }>;
@@ -126,6 +130,7 @@ export default function App() {
   const [command, setCommand] = useState<any>(null);
   const [mapData, setMapData] = useState<any>(null);
   const [reportHub, setReportHub] = useState<ReportingHub | null>(null);
+  const [reviewQueue, setReviewQueue] = useState<ReviewQueue | null>(null);
   const [incidentDetail, setIncidentDetail] = useState<IncidentDetail | null>(null);
 
   const [selectedIncidentId, setSelectedIncidentId] = useState("");
@@ -233,12 +238,13 @@ export default function App() {
       const inboxPromise = statusUnitIdRef.current
         ? fetchJson<MessageInbox>(`/api/v1/officer/messages/${statusUnitIdRef.current}?limit=12`).catch(() => null)
         : Promise.resolve(null);
-      const [q, u, c, m, h, inbox, feed] = await Promise.all([
+      const [q, u, c, m, h, rq, inbox, feed] = await Promise.all([
         fetchJson<{ incidents: IncidentSummary[] }>("/api/v1/dispatch/queue"),
         fetchJson<{ units: UnitSummary[] }>("/api/v1/dispatch/units"),
         fetchJson<any>("/api/v1/command/overview"),
         fetchJson<any>("/api/v1/map/overview"),
         fetchJson<ReportingHub>("/api/v1/reporting/hub"),
+        fetchJson<ReviewQueue>("/api/v1/reporting/review-queue"),
         inboxPromise,
         feedPromise,
       ]);
@@ -247,6 +253,7 @@ export default function App() {
       setCommand(c);
       setMapData(m);
       setReportHub(h);
+      setReviewQueue(rq);
       setMessageInbox(inbox);
       setOfficerFeed(feed);
       if (!selectedIncidentIdRef.current && q.incidents.length > 0) setSelectedIncidentId(q.incidents[0].incident_id);
@@ -821,6 +828,7 @@ export default function App() {
         <span className="chip">Hot zones: {mapData?.hot_zones.length ?? 0}</span>
         <span className="chip">Geofence alerts: {mapData?.geofenced_alerts.filter((item: any) => item.active).length ?? 0}</span>
         <span className="chip">Report drafts: {reportHub?.drafts.length ?? 0}</span>
+        <span className="chip">Supervisor review: {reviewQueue?.review_count ?? 0}</span>
       </div>
 
       <main className="layout">
@@ -1023,6 +1031,20 @@ export default function App() {
               <div className="kpi"><span>Units Available</span><strong>{command?.units_available ?? 0}</strong></div>
               <div className="kpi"><span>Avg ETA</span><strong>{command?.average_response_minutes ?? 0}m</strong></div>
             </div>
+          </article>
+          ) : null}
+          {(showDispatch || showReport) ? (
+          <article className="card panel">
+            <h2>Supervisor Review Queue</h2>
+            <p className="section-subtitle">{reviewQueue?.review_count ?? 0} reports flagged for review</p>
+            {(reviewQueue?.reports ?? []).slice(0, 5).map((item) => (
+              <div key={item.report_id} className="hub-row">
+                <strong>{item.report_id} · {item.incident_id}</strong>
+                <p>{item.unit_id} · {item.status} · {item.updated_at}</p>
+                <p>{item.reasons.join(" | ")}</p>
+              </div>
+            ))}
+            {(reviewQueue?.reports ?? []).length === 0 ? <div className="dispatch-banner">No reports currently require supervisor intervention.</div> : null}
           </article>
           ) : null}
 

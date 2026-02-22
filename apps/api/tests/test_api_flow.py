@@ -140,6 +140,10 @@ def test_intake_dispatch_reporting_flow() -> None:
     hub_payload = hub_response.json()
     assert any(draft["report_id"] == report_id for draft in hub_payload["drafts"])
 
+    review_queue_response = client.get("/api/v1/reporting/review-queue")
+    assert review_queue_response.status_code == 200
+    assert review_queue_response.json()["review_count"] >= 1
+
     reporting_response = client.post(
         "/api/v1/reporting/rms",
         json={

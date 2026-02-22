@@ -220,5 +220,39 @@ def get_reporting_hub() -> dict:
     return state.build_reporting_hub()
 
 
+def get_supervisor_review_queue() -> dict:
+    drafts = state.list_report_drafts()
+    queue: list[dict] = []
+    for draft in drafts:
+        incident = state.get_incident(draft["incident_id"])
+        disposition = incident.get("disposition") if incident else None
+        reasons: list[str] = []
+
+        if disposition and disposition.get("requires_supervisor_review"):
+            reasons.append("Disposition requires supervisor review.")
+        if len((draft.get("narrative") or "").strip()) < 120:
+            reasons.append("Narrative appears short.")
+        if not draft.get("template_id"):
+            reasons.append("Template not selected.")
+
+        if reasons:
+            queue.append(
+                {
+                    "report_id": draft["report_id"],
+                    "incident_id": draft["incident_id"],
+                    "unit_id": draft["unit_id"],
+                    "status": draft["status"],
+                    "updated_at": draft["updated_at"],
+                    "reasons": reasons,
+                }
+            )
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "review_count": len(queue),
+        "reports": queue,
+    }
+
+
 def get_report_draft(report_id: str) -> dict | None:
     return state.get_report_draft(report_id)
