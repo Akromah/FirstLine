@@ -2,10 +2,12 @@ from fastapi import APIRouter, HTTPException
 
 from app.modules.ai.service import (
     BriefingRequest,
+    DispositionDraftRequest,
     IncidentAssistRequest,
     ReportAssistRequest,
     incident_briefing,
     incident_assist,
+    disposition_draft,
     report_assist,
 )
 
@@ -31,6 +33,14 @@ def ai_report_assist(payload: ReportAssistRequest) -> dict:
 @router.post("/briefing")
 def ai_incident_briefing(payload: BriefingRequest) -> dict:
     response = incident_briefing(payload)
+    if not response:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return response
+
+
+@router.post("/disposition-draft")
+def ai_disposition_draft(payload: DispositionDraftRequest) -> dict:
+    response = disposition_draft(payload)
     if not response:
         raise HTTPException(status_code=404, detail="Incident not found")
     return response

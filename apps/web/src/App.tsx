@@ -91,6 +91,18 @@ type AIBriefing = {
   hazards: string[];
   checklist: string[];
 };
+type AIDispositionDraft = {
+  incident_id: string;
+  unit_id?: string | null;
+  recommended_disposition_code: string;
+  summary: string;
+  arrest_made: boolean;
+  citation_issued: boolean;
+  force_used: boolean;
+  requires_supervisor_review: boolean;
+  confidence: number;
+  reasons: string[];
+};
 type ReportTemplate = {
   template_id: string;
   label: string;
@@ -325,6 +337,7 @@ export default function App() {
   const [aiPrompt, setAiPrompt] = useState("Provide next actions and final disposition.");
   const [aiAssist, setAiAssist] = useState<AIAssist | null>(null);
   const [safetyBriefing, setSafetyBriefing] = useState<AIBriefing | null>(null);
+  const [aiDispositionDraft, setAiDispositionDraft] = useState<AIDispositionDraft | null>(null);
 
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
@@ -562,6 +575,7 @@ export default function App() {
     setReportNarrative(`Incident ${selectedIncident.incident_id}: ${selectedIncident.call_type} at ${selectedIncident.address}.`);
     setChannelIncidentId(selectedIncident.incident_id);
     setIncidentIntel(null);
+    setAiDispositionDraft(null);
   }, [selectedIncident?.incident_id]);
 
   useEffect(() => {
@@ -1327,6 +1341,36 @@ export default function App() {
     }
   }
 
+  async function handleAiDispositionDraft() {
+    if (!selectedIncident) return;
+    setLoading(true);
+    try {
+      const result = await fetchJson<AIDispositionDraft>("/api/v1/ai/disposition-draft", {
+        method: "POST",
+        body: JSON.stringify({
+          incident_id: selectedIncident.incident_id,
+          unit_id: statusUnitId,
+        }),
+      });
+      setAiDispositionDraft(result);
+      setBanner(`Disposition draft generated (${Math.round(result.confidence * 100)}% confidence).`);
+    } catch (error) {
+      setBanner(`Disposition draft failed: ${(error as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleApplyAiDispositionDraft() {
+    if (!aiDispositionDraft) return;
+    setDispositionCode(aiDispositionDraft.recommended_disposition_code);
+    setDispositionSummary(aiDispositionDraft.summary);
+    setArrestMade(aiDispositionDraft.arrest_made);
+    setCitationIssued(aiDispositionDraft.citation_issued);
+    setForceUsed(aiDispositionDraft.force_used);
+    setBanner(`Applied AI disposition draft ${aiDispositionDraft.recommended_disposition_code}.`);
+  }
+
   async function handleQuickCode(action: "EN_ROUTE" | "ON_SCENE" | "CLEAR") {
     await handleOfficerAction(action);
     if (action === "EN_ROUTE") setStatusValue("EN_ROUTE");
@@ -1928,8 +1972,12 @@ export default function App() {
             <h2>AI Operations Engine</h2>
             <p className="section-subtitle">Incident: {selectedIncident?.incident_id ?? "None selected"}</p>
             <label className="form-field">Prompt<input value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} /></label>
-            <div className="dev-actions"><button type="button" onClick={handleAiAssist} disabled={loading}>Generate AI Assist</button></div>
+            <div className="button-grid">
+              <button type="button" onClick={handleAiAssist} disabled={loading}>Generate AI Assist</button>
+              <button type="button" onClick={handleAiDispositionDraft} disabled={loading || !selectedIncident}>Draft Disposition</button>
+            </div>
             {aiAssist ? <div className="ai-box"><p>{aiAssist.summary}</p><p>Recommendation: <strong>{aiAssist.recommended_disposition_code}</strong></p><p>Next actions: {aiAssist.next_actions.join(" | ")}</p><p>Safety alerts: {aiAssist.officer_safety_alerts.join(" | ") || "None"}</p></div> : null}
+            {aiDispositionDraft ? <div className="ai-box"><p>Disposition draft: <strong>{aiDispositionDraft.recommended_disposition_code}</strong></p><p>{aiDispositionDraft.summary}</p><p>Reasons: {aiDispositionDraft.reasons.join(" | ")}</p></div> : null}
           </article>
           ) : null}
 
@@ -1955,6 +2003,21 @@ export default function App() {
                 {reportReadiness.has_disposition
                   ? "Disposition complete. Incident can be cleared when report checklist is complete."
                   : "Disposition required before CLEAR action and final RMS submission."}
+              </div>
+            ) : null}
+            <div className="button-grid">
+              <button type="button" onClick={handleAiDispositionDraft} disabled={loading || !selectedIncident}>
+                AI Draft Disposition
+              </button>
+              <button type="button" onClick={handleApplyAiDispositionDraft} disabled={loading || !aiDispositionDraft}>
+                Apply AI Draft
+              </button>
+            </div>
+            {aiDispositionDraft ? (
+              <div className="ai-box">
+                <p>Recommended code: <strong>{aiDispositionDraft.recommended_disposition_code}</strong> ({Math.round(aiDispositionDraft.confidence * 100)}%)</p>
+                <p>{aiDispositionDraft.summary}</p>
+                <p>Reasons: {aiDispositionDraft.reasons.join(" | ")}</p>
               </div>
             ) : null}
             <div className="dispatch-form-grid">

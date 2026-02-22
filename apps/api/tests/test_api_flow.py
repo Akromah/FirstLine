@@ -143,6 +143,16 @@ def test_intake_dispatch_reporting_flow() -> None:
     assert briefing_response.status_code == 200
     assert briefing_response.json()["risk_score"] >= 1
 
+    disposition_draft_response = client.post(
+        "/api/v1/ai/disposition-draft",
+        json={
+            "incident_id": incident_id,
+            "unit_id": assignment_payload["recommended_unit_id"],
+        },
+    )
+    assert disposition_draft_response.status_code == 200
+    assert disposition_draft_response.json()["recommended_disposition_code"]
+
     command_response = client.get("/api/v1/command/overview")
     assert command_response.status_code == 200
     command_payload = command_response.json()
