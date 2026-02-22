@@ -440,6 +440,8 @@ def test_intake_dispatch_reporting_flow() -> None:
     assert patrol_start_payload["dispatchable_units"] == 10
     assert patrol_start_payload["senior_units"] == 2
     assert patrol_start_payload["beats_active"] == [1, 2, 3, 4, 5]
+    assert patrol_start_payload["call_types_loaded"] >= 50
+    assert patrol_start_payload["call_locations_loaded"] >= 50
 
     patrol_status_response = client.get("/api/v1/intake/patrol-sim/status")
     assert patrol_status_response.status_code == 200
@@ -589,6 +591,8 @@ def test_intake_dispatch_reporting_flow() -> None:
     assert live_start_payload["profile"] == "LIVE_DEV"
     assert live_start_payload["logged_in_unit_id"] == "u-day-3"
     assert live_start_payload["max_active_calls"] == 10
+    assert live_start_payload["call_types_loaded"] >= 50
+    assert live_start_payload["call_locations_loaded"] >= 50
 
     live_status_response = client.get("/api/v1/intake/patrol-sim/status")
     assert live_status_response.status_code == 200
@@ -596,6 +600,12 @@ def test_intake_dispatch_reporting_flow() -> None:
     assert live_status_payload["enabled"] is True
     assert live_status_payload["profile"] == "LIVE_DEV"
     assert live_status_payload["logged_in_unit_id"] == "u-day-3"
+    assert live_status_payload["call_types_loaded"] >= 50
+    assert live_status_payload["call_locations_loaded"] >= 50
+
+    live_tick_response = client.post("/api/v1/intake/patrol-sim/tick")
+    assert live_tick_response.status_code == 200
+    assert "advanced" in live_tick_response.json()
 
     live_intake_response = client.post(
         "/api/v1/intake/calls",

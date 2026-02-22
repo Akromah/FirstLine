@@ -105,6 +105,46 @@ body {
   font-size: 12px;
 }
 
+.live-sim-toggle.active {
+  border-color: #2fbc67;
+  background: linear-gradient(180deg, #2fbc67 0%, #228b4c 100%);
+  color: #f4fff9;
+}
+
+.live-sim-panel {
+  margin-top: 10px;
+  border-color: #2d4f7c;
+  background: linear-gradient(180deg, #102037 0%, #0d1a2e 100%);
+}
+
+.live-sim-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.live-sim-panel-head h2 {
+  margin: 0;
+}
+
+.live-sim-kpis .kpi {
+  border-color: #2b4670;
+  background: #132843;
+}
+
+.live-sim-kpis .kpi span {
+  color: #8fb0d8;
+}
+
+.live-sim-kpis .kpi strong {
+  color: #e9f3ff;
+}
+
+.live-sim-roster h3 {
+  margin: 12px 0 8px;
+}
+
 .role-badge {
   border: 1px solid #ccd9ef;
   border-radius: 999px;

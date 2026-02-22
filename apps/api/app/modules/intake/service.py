@@ -1,8 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from math import cos, sin
 from random import Random
-from typing import Literal
-
 from pydantic import BaseModel, Field
 
 from app.core.state import parse_utc, state
@@ -18,6 +16,7 @@ class IntakeRequest(BaseModel):
     address: str | None = None
     lat: float | None = None
     lon: float | None = None
+    override_call_type: str | None = None
 
 
 class IntakeResponse(BaseModel):
@@ -25,7 +24,7 @@ class IntakeResponse(BaseModel):
     normalized_address: str
     geolocation: dict[str, float]
     duplicate_call_ids: list[str] = Field(default_factory=list)
-    suggested_call_type: Literal["Traffic", "Medical", "Domestic", "Burglary", "Unknown"]
+    suggested_call_type: str
     auto_priority_score: int
     rationale: list[str] = Field(default_factory=list)
     transcript_live_enabled: bool = True
@@ -49,8 +48,8 @@ class PatrolSimulationRequest(BaseModel):
     initial_calls: int = Field(default=4, ge=1, le=20)
     live_mode: bool = False
     logged_in_unit_id: str | None = None
-    min_call_interval_seconds: int = Field(default=30, ge=15, le=300)
-    max_call_interval_seconds: int = Field(default=120, ge=20, le=600)
+    min_call_interval_seconds: int = Field(default=20, ge=5, le=300)
+    max_call_interval_seconds: int = Field(default=75, ge=8, le=600)
     max_active_calls: int = Field(default=10, ge=3, le=20)
     min_call_duration_seconds: int = Field(default=60, ge=60, le=600)
     max_call_duration_seconds: int = Field(default=600, ge=60, le=1800)
@@ -95,24 +94,81 @@ def score_priority(call_text: str, address: str | None) -> tuple[int, list[str]]
 
 def suggest_call_type(call_text: str) -> str:
     text = call_text.lower()
+    detailed_patterns: list[tuple[str, list[str]]] = [
+        ("Armed Robbery In Progress", ["armed robbery", "robbery in progress", "stickup"]),
+        ("Strong-Arm Robbery", ["strong arm robbery", "strong armed", "purse snatch"]),
+        ("Assault With Deadly Weapon", ["assault with deadly weapon", "adw", "knife attack", "machete"]),
+        ("Domestic Violence Physical", ["domestic violence", "domestic battery", "partner hit"]),
+        ("Domestic Disturbance Verbal", ["domestic disturbance", "loud argument", "verbal domestic"]),
+        ("Shots Fired", ["shots fired", "gunshots", "rounds fired"]),
+        ("Person With Weapon", ["person with weapon", "brandishing", "gun seen", "armed subject"]),
+        ("Burglary Residential", ["residential burglary", "break in", "intruder", "window smashed"]),
+        ("Burglary Commercial", ["commercial burglary", "business alarm", "store break-in"]),
+        ("Vehicle Burglary", ["vehicle burglary", "car window", "tampering with vehicle"]),
+        ("Auto Theft", ["stolen vehicle", "auto theft", "vehicle taken"]),
+        ("Attempted Auto Theft", ["attempted auto theft", "catalytic converter", "trying to steal car"]),
+        ("Carjacking", ["carjacking", "vehicle takeover", "driver forced out"]),
+        ("DUI Driver", ["dui", "drunk driver", "impaired driver"]),
+        ("Hit and Run Injury", ["hit and run injury", "left scene with injury"]),
+        ("Hit and Run Property Damage", ["hit and run", "left scene", "vehicle fled"]),
+        ("Major Injury Collision", ["major injury collision", "rollover", "extrication"]),
+        ("Traffic Collision Blocking", ["traffic crash", "collision blocking", "accident blocking"]),
+        ("Mental Health Crisis", ["mental health crisis", "5150", "behavioral crisis", "suicidal"]),
+        ("Overdose", ["overdose", "not breathing", "narcan"]),
+        ("Welfare Check", ["welfare check", "wellness check", "unable to contact"]),
+        ("Missing Person", ["missing person", "runaway"]),
+        ("Stalking", ["stalking", "being followed", "repeated threats"]),
+        ("Criminal Threats", ["criminal threats", "threatened to kill", "death threat"]),
+        ("Trespassing", ["trespassing", "refusing to leave", "unlawful entry"]),
+        ("Vandalism", ["vandalism", "graffiti", "property damage"]),
+        ("Narcotics Activity", ["narcotics", "drug activity", "possible sales"]),
+        ("Disturbing the Peace", ["disturbing the peace", "fight in progress", "disorderly"]),
+        ("Noise Complaint", ["noise complaint", "loud party", "loud music"]),
+        ("Suspicious Person", ["suspicious person", "prowler", "loitering"]),
+        ("Suspicious Vehicle", ["suspicious vehicle", "occupied suspicious", "circling block"]),
+        ("Fraud Report", ["fraud", "forged check", "identity theft"]),
+        ("Warrant Service Assist", ["warrant service", "warrant check"]),
+    ]
+    for label, patterns in detailed_patterns:
+        if any(pattern in text for pattern in patterns):
+            return label
     if any(k in text for k in ["car crash", "traffic", "hit and run", "accident"]):
-        return "Traffic"
+        return "Traffic Collision"
     if any(k in text for k in ["chest pain", "medical", "unconscious", "overdose"]):
-        return "Medical"
+        return "Medical Aid"
     if any(k in text for k in ["domestic", "arguing", "husband", "wife"]):
-        return "Domestic"
+        return "Domestic Disturbance"
     if any(k in text for k in ["break in", "burglary", "intruder", "window"]):
         return "Burglary"
-    return "Unknown"
+    return "Unknown Call Type"
+
+
+def normalize_call_category(call_type: str, call_text: str) -> str:
+    combined = f"{call_type} {call_text}".lower()
+    if any(token in combined for token in ["traffic", "dui", "collision", "hit and run", "carjacking", "street racing", "reckless driver"]):
+        return "TRAFFIC"
+    if any(token in combined for token in ["medical", "overdose", "not breathing", "suicid", "welfare check", "mental health"]):
+        return "MEDICAL"
+    if any(token in combined for token in ["domestic", "spouse", "partner", "family violence"]):
+        return "DOMESTIC"
+    if any(token in combined for token in ["robbery", "assault", "weapon", "shots fired", "battery", "carjacking"]):
+        return "VIOLENT"
+    if any(token in combined for token in ["burglary", "theft", "vandalism", "fraud", "trespass"]):
+        return "PROPERTY"
+    return "OTHER"
 
 
 def infer_required_skills(call_type: str, call_text: str) -> list[str]:
     text = call_text.lower()
+    type_text = call_type.lower()
+    category = normalize_call_category(call_type, call_text)
     skills: list[str] = []
-    if call_type in {"Medical"}:
+    if category == "MEDICAL":
         skills.append("Medical")
-    if call_type in {"Domestic"}:
+    if category in {"DOMESTIC", "VIOLENT"}:
         skills.append("Crisis")
+    if any(k in type_text for k in ["warrant", "weapon", "shots fired", "robbery"]):
+        skills.append("SWAT")
     if any(k in text for k in ["spanish", "translation", "habla"]):
         skills.append("Spanish")
     if any(k in text for k in ["k9", "canine", "track"]):
@@ -124,7 +180,7 @@ def infer_required_skills(call_type: str, call_text: str) -> list[str]:
 
 def process_intake(payload: IntakeRequest) -> IntakeResponse:
     priority, reasons = score_priority(payload.call_text, payload.address)
-    call_type = suggest_call_type(payload.call_text)
+    call_type = (payload.override_call_type or "").strip() or suggest_call_type(payload.call_text)
     code_guess = infer_primary_california_code(payload.call_text, call_type)
     normalized_address = payload.address or "Address lookup pending"
     duplicate_ids = state.find_duplicate_incidents(normalized_address)
@@ -476,42 +532,111 @@ BEAT_OVERLAYS = [
     },
 ]
 
-PATROL_CALL_LIBRARY = [
-    {
-        "beat": 1,
-        "caller_name": "Transit Dispatch",
-        "phone": "555-4801",
-        "call_text": "Transit disturbance near downtown stop. One subject refusing to leave.",
-        "address": "812 Eureka St, Redlands",
-    },
-    {
-        "beat": 2,
-        "caller_name": "Store Security",
-        "phone": "555-4802",
-        "call_text": "Shoplifting suspect detained, possible second suspect fleeing lot.",
-        "address": "145 Olive Ave, Redlands",
-    },
-    {
-        "beat": 3,
-        "caller_name": "Resident",
-        "phone": "555-4803",
-        "call_text": "Domestic argument escalating, neighbors hearing threats and glass breaking.",
-        "address": "304 University St, Redlands",
-    },
-    {
-        "beat": 4,
-        "caller_name": "Nurse",
-        "phone": "555-4804",
-        "call_text": "Subject in behavioral crisis outside urgent care refusing medical aid.",
-        "address": "98 Brookside Ave, Redlands",
-    },
-    {
-        "beat": 5,
-        "caller_name": "Motorist",
-        "phone": "555-4805",
-        "call_text": "Road rage incident and possible handgun seen during traffic confrontation.",
-        "address": "517 Pearl Ave, Redlands",
-    },
+PATROL_CALL_TYPES = [
+    {"call_type": "Armed Robbery In Progress", "caller_name": "Store Clerk", "call_text": "Armed robbery in progress. Suspect threatened clerk with a handgun and took cash by force and fear."},
+    {"call_type": "Strong-Arm Robbery", "caller_name": "Victim", "call_text": "Strong-armed robbery just occurred. Suspect grabbed phone from victim and pushed victim to the ground."},
+    {"call_type": "Residential Burglary Audible Alarm", "caller_name": "Alarm Company", "call_text": "Residential burglary alarm. Rear window shattered and unknown subject entered residence."},
+    {"call_type": "Commercial Burglary", "caller_name": "Business Owner", "call_text": "Commercial burglary at closed business. Front door pried and property missing."},
+    {"call_type": "Vehicle Burglary", "caller_name": "Caller", "call_text": "Vehicle burglary in parking lot. Car window smashed and backpack stolen."},
+    {"call_type": "Auto Theft", "caller_name": "Vehicle Owner", "call_text": "Auto theft report. Vehicle taken from driveway without consent."},
+    {"call_type": "Attempted Auto Theft", "caller_name": "Neighbor", "call_text": "Attempted auto theft in progress. Subjects trying to remove catalytic converter."},
+    {"call_type": "Carjacking", "caller_name": "Victim", "call_text": "Carjacking just occurred. Driver forced out of vehicle by threat and suspect fled with car."},
+    {"call_type": "Assault With Deadly Weapon", "caller_name": "Witness", "call_text": "Assault with deadly weapon. Suspect swinging machete at pedestrians."},
+    {"call_type": "Battery", "caller_name": "Victim", "call_text": "Battery call. Subject punched victim during argument."},
+    {"call_type": "Domestic Violence Physical", "caller_name": "Neighbor", "call_text": "Domestic violence physical. Partner struck victim causing visible injury."},
+    {"call_type": "Domestic Disturbance Verbal", "caller_name": "Neighbor", "call_text": "Domestic disturbance verbal with yelling, threats, and possible property damage."},
+    {"call_type": "Child Welfare Check", "caller_name": "School Staff", "call_text": "Child welfare check requested. Juvenile appears abandoned and distressed."},
+    {"call_type": "Elder Abuse Report", "caller_name": "Caregiver", "call_text": "Elder abuse report. Elder claims caregiver used force and took medications."},
+    {"call_type": "Stalking", "caller_name": "Victim", "call_text": "Stalking report. Unknown subject repeatedly follows victim and waits outside home."},
+    {"call_type": "Criminal Threats", "caller_name": "Victim", "call_text": "Criminal threats. Caller received death threat by text and voicemail."},
+    {"call_type": "Brandishing Firearm", "caller_name": "Witness", "call_text": "Brandishing firearm during confrontation in parking lot."},
+    {"call_type": "Shots Fired", "caller_name": "Multiple Callers", "call_text": "Shots fired heard from alley. Possible vehicle fleeing westbound."},
+    {"call_type": "Person With Weapon", "caller_name": "Security", "call_text": "Person with weapon seen outside business, possibly armed with knife."},
+    {"call_type": "Suspicious Person", "caller_name": "Resident", "call_text": "Suspicious person checking door handles and peeking into windows."},
+    {"call_type": "Suspicious Vehicle", "caller_name": "Resident", "call_text": "Suspicious vehicle circling block repeatedly and stopping in front of homes."},
+    {"call_type": "Trespassing", "caller_name": "Property Manager", "call_text": "Trespassing call. Subject refuses to leave private property."},
+    {"call_type": "Vandalism Graffiti", "caller_name": "Business Owner", "call_text": "Vandalism and graffiti in progress on storefront."},
+    {"call_type": "Vandalism Property Damage", "caller_name": "Resident", "call_text": "Vandalism report. Mailboxes broken and car tires slashed."},
+    {"call_type": "Narcotics Activity", "caller_name": "Caller", "call_text": "Narcotics activity. Hand-to-hand transactions observed near alley."},
+    {"call_type": "Overdose", "caller_name": "Friend", "call_text": "Possible overdose. Adult male not breathing, Narcan requested."},
+    {"call_type": "Mental Health Crisis", "caller_name": "Family Member", "call_text": "Mental health crisis. Subject making suicidal statements and pacing in street."},
+    {"call_type": "Welfare Check", "caller_name": "Family Member", "call_text": "Welfare check requested, no contact with elderly resident for two days."},
+    {"call_type": "Missing Person", "caller_name": "Parent", "call_text": "Missing person juvenile did not return home after school."},
+    {"call_type": "Found Child", "caller_name": "Resident", "call_text": "Found child alone at park and unable to locate guardian."},
+    {"call_type": "DUI Driver", "caller_name": "Motorist", "call_text": "Possible DUI driver swerving across lanes and almost hit curb."},
+    {"call_type": "Hit and Run Injury", "caller_name": "Witness", "call_text": "Hit and run injury collision. Vehicle fled scene after striking pedestrian."},
+    {"call_type": "Hit and Run Property Damage", "caller_name": "Victim", "call_text": "Hit and run property damage. Parked vehicle struck and suspect fled."},
+    {"call_type": "Major Injury Collision", "caller_name": "Motorist", "call_text": "Major injury traffic collision with rollover, occupants trapped."},
+    {"call_type": "Traffic Collision Blocking", "caller_name": "Motorist", "call_text": "Traffic collision blocking lane with debris and arguing drivers."},
+    {"call_type": "Reckless Driver", "caller_name": "Caller", "call_text": "Reckless driver speeding and weaving through traffic."},
+    {"call_type": "Street Racing", "caller_name": "Resident", "call_text": "Street racing and burnouts in intersection."},
+    {"call_type": "Disturbing the Peace", "caller_name": "Caller", "call_text": "Disturbing the peace, large fight in parking lot."},
+    {"call_type": "Loud Party", "caller_name": "Neighbor", "call_text": "Loud party with possible underage drinking and disturbance."},
+    {"call_type": "Noise Complaint", "caller_name": "Neighbor", "call_text": "Noise complaint for amplified music after quiet hours."},
+    {"call_type": "Illegal Fireworks", "caller_name": "Resident", "call_text": "Illegal fireworks being launched near homes."},
+    {"call_type": "Arson Attempt", "caller_name": "Witness", "call_text": "Possible arson attempt. Subject seen igniting trash enclosure."},
+    {"call_type": "Medical Aid Assist", "caller_name": "EMS", "call_text": "Medical aid assist requested for combative patient in crisis."},
+    {"call_type": "Suicide Attempt", "caller_name": "Family Member", "call_text": "Suicide attempt in progress, subject threatening self-harm."},
+    {"call_type": "Battery On Officer Assist", "caller_name": "Officer Request", "call_text": "Assist requested. Subject battered officer during detention and fled."},
+    {"call_type": "Resisting Arrest", "caller_name": "Witness", "call_text": "Subject resisting arrest and attempting to flee on foot."},
+    {"call_type": "Warrant Service Assist", "caller_name": "Detective", "call_text": "Warrant service assist requested at residence with prior violence history."},
+    {"call_type": "Fraud Report", "caller_name": "Bank Manager", "call_text": "Fraud report involving forged check and identity misuse."},
+    {"call_type": "Identity Theft Report", "caller_name": "Victim", "call_text": "Identity theft report with unauthorized credit applications."},
+    {"call_type": "Subject Down Not Breathing", "caller_name": "Caller", "call_text": "Subject down not breathing in parking lot, medical and police requested."},
+    {"call_type": "Public Intoxication", "caller_name": "Business Staff", "call_text": "Public intoxication and disorderly behavior outside restaurant."},
+]
+
+REDLANDS_PATROL_LOCATIONS = [
+    {"beat": 1, "address": "1 E State St, Redlands"},
+    {"beat": 2, "address": "101 W State St, Redlands"},
+    {"beat": 3, "address": "205 E Citrus Ave, Redlands"},
+    {"beat": 4, "address": "312 Brookside Ave, Redlands"},
+    {"beat": 5, "address": "417 Pearl Ave, Redlands"},
+    {"beat": 1, "address": "522 Cajon St, Redlands"},
+    {"beat": 2, "address": "608 Orange St, Redlands"},
+    {"beat": 3, "address": "715 University St, Redlands"},
+    {"beat": 4, "address": "823 Colton Ave, Redlands"},
+    {"beat": 5, "address": "902 New York St, Redlands"},
+    {"beat": 1, "address": "66 E Olive Ave, Redlands"},
+    {"beat": 2, "address": "145 Olive Ave, Redlands"},
+    {"beat": 3, "address": "233 Eureka St, Redlands"},
+    {"beat": 4, "address": "318 San Bernardino Ave, Redlands"},
+    {"beat": 5, "address": "409 Alabama St, Redlands"},
+    {"beat": 1, "address": "512 Church St, Redlands"},
+    {"beat": 2, "address": "633 Fern Ave, Redlands"},
+    {"beat": 3, "address": "744 Barton Rd, Redlands"},
+    {"beat": 4, "address": "855 Tennessee St, Redlands"},
+    {"beat": 5, "address": "966 Lugonia Ave, Redlands"},
+    {"beat": 1, "address": "1101 Redlands Blvd, Redlands"},
+    {"beat": 2, "address": "118 E High Ave, Redlands"},
+    {"beat": 3, "address": "224 W High Ave, Redlands"},
+    {"beat": 4, "address": "337 E Pioneer Ave, Redlands"},
+    {"beat": 5, "address": "449 W Pioneer Ave, Redlands"},
+    {"beat": 1, "address": "553 E Cypress Ave, Redlands"},
+    {"beat": 2, "address": "667 W Cypress Ave, Redlands"},
+    {"beat": 3, "address": "772 E Sunset Dr, Redlands"},
+    {"beat": 4, "address": "884 W Sunset Dr, Redlands"},
+    {"beat": 5, "address": "995 Nevada St, Redlands"},
+    {"beat": 1, "address": "108 E Stuart Ave, Redlands"},
+    {"beat": 2, "address": "217 W Stuart Ave, Redlands"},
+    {"beat": 3, "address": "326 E Crescent Ave, Redlands"},
+    {"beat": 4, "address": "438 W Crescent Ave, Redlands"},
+    {"beat": 5, "address": "549 Judson St, Redlands"},
+    {"beat": 1, "address": "658 Garden St, Redlands"},
+    {"beat": 2, "address": "763 Franklin Ave, Redlands"},
+    {"beat": 3, "address": "872 Bellevue Ave, Redlands"},
+    {"beat": 4, "address": "981 Dearborn St, Redlands"},
+    {"beat": 5, "address": "1096 Tribuna Ave, Redlands"},
+    {"beat": 1, "address": "120 E Palm Ave, Redlands"},
+    {"beat": 2, "address": "232 W Palm Ave, Redlands"},
+    {"beat": 3, "address": "341 E Brockton Ave, Redlands"},
+    {"beat": 4, "address": "457 W Brockton Ave, Redlands"},
+    {"beat": 5, "address": "568 Kansas St, Redlands"},
+    {"beat": 1, "address": "675 Park Ave, Redlands"},
+    {"beat": 2, "address": "784 Center St, Redlands"},
+    {"beat": 3, "address": "893 Grant St, Redlands"},
+    {"beat": 4, "address": "1004 Clay St, Redlands"},
+    {"beat": 5, "address": "1115 Via Vista Dr, Redlands"},
 ]
 
 PATROL_NAMES_DAY = [
@@ -674,20 +799,25 @@ def _create_patrol_call(
     min_call_duration_seconds: int = 60,
     max_call_duration_seconds: int = 600,
 ) -> dict:
-    template = PATROL_CALL_LIBRARY[template_index % len(PATROL_CALL_LIBRARY)]
-    beat = _beat_by_id(int(template["beat"]))
-    lat_min, lat_max, lon_min, lon_max = _beat_bounds(int(template["beat"]))
+    call_profile = PATROL_CALL_TYPES[template_index % len(PATROL_CALL_TYPES)]
+    location_index = (template_index * 7) % len(REDLANDS_PATROL_LOCATIONS)
+    location = REDLANDS_PATROL_LOCATIONS[location_index]
+    beat_id = int(location["beat"])
+    beat = _beat_by_id(beat_id)
+    lat_min, lat_max, lon_min, lon_max = _beat_bounds(beat_id)
     rng: Random = PATROL_RUNTIME["rng"]
     lat = beat["center"]["lat"] + ((rng.random() - 0.5) * (lat_max - lat_min) * 0.65)
     lon = beat["center"]["lon"] + ((rng.random() - 0.5) * (lon_max - lon_min) * 0.65)
+    phone_suffix = 5000 + (template_index % 900)
     intake = process_intake(
         IntakeRequest(
-            caller_name=template["caller_name"],
-            phone=template["phone"],
-            call_text=template["call_text"],
-            address=template["address"],
+            caller_name=call_profile["caller_name"],
+            phone=f"555-{phone_suffix:04d}",
+            call_text=call_profile["call_text"],
+            address=str(location["address"]),
             lat=lat,
             lon=lon,
+            override_call_type=call_profile["call_type"],
         )
     )
     assigned, unit_id = _dispatch_new_incident(intake.call_id, excluded_unit_id=excluded_unit_id)
@@ -743,6 +873,8 @@ def start_patrol_simulation(payload: PatrolSimulationRequest) -> dict:
             "min_call_duration_seconds": min_call_duration,
             "max_call_duration_seconds": max_call_duration,
             "logged_in_unit_id": PATROL_RUNTIME["excluded_unit_id"],
+            "call_types_loaded": len(PATROL_CALL_TYPES),
+            "call_locations_loaded": len(REDLANDS_PATROL_LOCATIONS),
         },
     )
 
@@ -773,6 +905,8 @@ def start_patrol_simulation(payload: PatrolSimulationRequest) -> dict:
         "max_active_calls": max_active_calls,
         "next_call_due_at": next_due_at,
         "logged_in_unit_id": PATROL_RUNTIME["excluded_unit_id"],
+        "call_types_loaded": len(PATROL_CALL_TYPES),
+        "call_locations_loaded": len(REDLANDS_PATROL_LOCATIONS),
     }
 
 
@@ -790,6 +924,8 @@ def stop_patrol_simulation() -> dict:
             "min_call_duration_seconds": 60,
             "max_call_duration_seconds": 600,
             "logged_in_unit_id": None,
+            "call_types_loaded": len(PATROL_CALL_TYPES),
+            "call_locations_loaded": len(REDLANDS_PATROL_LOCATIONS),
         },
     )
     return {"stopped": True, "profile": "OFF", "status": state.patrol_simulation_status()}
@@ -806,13 +942,14 @@ def _auto_close_incident(incident: dict) -> None:
     if not unit_id:
         return
     text = (incident.get("call_text") or "").lower()
-    call_type = (incident.get("call_type") or "Unknown").upper()
+    call_type = str(incident.get("call_type") or "Unknown")
+    category = normalize_call_category(call_type, text)
     disposition = "REPORT_ONLY"
     if "weapon" in text or "gun" in text:
         disposition = "ARREST_MADE"
-    elif call_type == "TRAFFIC":
+    elif category == "TRAFFIC":
         disposition = "WARNING_ISSUED"
-    elif call_type == "MEDICAL":
+    elif category == "MEDICAL":
         disposition = "REFERRED"
     summary = (
         f"{incident['call_type']} call stabilized by {unit_id}. "
@@ -827,6 +964,7 @@ def _auto_close_incident(incident: dict) -> None:
         citation_issued=disposition == "WARNING_ISSUED",
         force_used=False,
     )
+    state.mark_patrol_call_resolved()
 
 
 def _move_toward(current_lat: float, current_lon: float, target_lat: float, target_lon: float, ratio: float = 0.26) -> tuple[float, float]:
@@ -836,14 +974,14 @@ def _move_toward(current_lat: float, current_lon: float, target_lat: float, targ
     )
 
 
-def advance_patrol_simulation() -> dict:
+def advance_patrol_simulation(force: bool = False) -> dict:
     status = state.patrol_simulation_status()
     if not status.get("enabled"):
         return {"advanced": False, "reason": "simulation_disabled"}
 
     last_tick_raw = status.get("last_tick")
     tick_seconds = int(status.get("tick_seconds") or 12)
-    if last_tick_raw:
+    if last_tick_raw and not force:
         elapsed = (datetime.now(timezone.utc) - parse_utc(str(last_tick_raw))).total_seconds()
         if elapsed < tick_seconds:
             return {"advanced": False, "reason": "tick_interval", "next_in_seconds": int(tick_seconds - elapsed)}

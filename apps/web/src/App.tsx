@@ -95,12 +95,17 @@ type PatrolSimulationStatus = {
   next_call_due_at?: string | null;
   calls_generated: number;
   calls_auto_assigned: number;
+  calls_resolved?: number;
+  calls_received?: number;
+  calls_assigned?: number;
   min_call_interval_seconds?: number;
   max_call_interval_seconds?: number;
   max_active_calls?: number;
   min_call_duration_seconds?: number;
   max_call_duration_seconds?: number;
   logged_in_unit_id?: string | null;
+  call_types_loaded?: number;
+  call_locations_loaded?: number;
   timed_incidents?: number;
   tick_index: number;
   dispatchable_units: number;
@@ -583,6 +588,7 @@ export default function App() {
   const [sessionRole, setSessionRole] = useState("Dispatcher");
   const [viewMode, setViewMode] = useState<ViewMode>("Dispatch");
   const [activeModule, setActiveModule] = useState<ModulePanel>("queue");
+  const [liveSimPanelOpen, setLiveSimPanelOpen] = useState(false);
   const [moduleSearch, setModuleSearch] = useState("");
   const [openModuleGroups, setOpenModuleGroups] = useState<Record<ModuleGroupId, boolean>>({
     ops: true,
@@ -1115,7 +1121,9 @@ export default function App() {
       mapData.units.forEach((unit: UnitSummary) => {
         const el = document.createElement("div");
         el.className = `map-unit-marker status-${unit.status.toLowerCase().replaceAll("_", "-")}`;
-        el.innerText = `${unit.callsign}\n${unit.status}`;
+        const officerShort = (unit.officer_name ?? "Unassigned").replace("Ofc. ", "");
+        el.innerText = `${unit.callsign}\n${officerShort}`;
+        el.title = `${unit.callsign} · ${unit.officer_name ?? "Unassigned"} · ${unit.status} · Beat ${unit.beat ?? "N/A"}`;
         markerRefs.current.push(new mapLibRef.current.Marker({ element: el }).setLngLat([unit.coordinates.lon, unit.coordinates.lat]).addTo(mapRef.current!));
       });
     }
@@ -1552,16 +1560,18 @@ export default function App() {
           initial_calls: number;
           max_active_calls: number;
           next_call_due_at?: string | null;
+          call_types_loaded?: number;
+          call_locations_loaded?: number;
         }>("/api/v1/intake/patrol-sim/start", {
           method: "POST",
           body: JSON.stringify({
             clear_existing: true,
             live_mode: true,
-            tick_seconds: 8,
-            initial_calls: 4,
+            tick_seconds: 6,
+            initial_calls: 6,
             logged_in_unit_id: statusUnitId || null,
-            min_call_interval_seconds: 30,
-            max_call_interval_seconds: 120,
+            min_call_interval_seconds: 15,
+            max_call_interval_seconds: 45,
             max_active_calls: 10,
             min_call_duration_seconds: 60,
             max_call_duration_seconds: 600,
@@ -1570,8 +1580,9 @@ export default function App() {
         setShowMapUnits(true);
         setShowMapIncidents(true);
         setShowMapBeats(true);
+        setLiveSimPanelOpen(true);
         setBanner(
-          `Live simulation active: ${result.dispatchable_units} patrol units roaming, ${result.initial_calls} active starter calls, max ${result.max_active_calls}.`
+          `Live simulation active: ${result.dispatchable_units} patrol units roaming, ${result.initial_calls} active starter calls, max ${result.max_active_calls}. Call catalog ${result.call_types_loaded ?? 0} types / ${result.call_locations_loaded ?? 0} Redlands locations.`
         );
         setActiveModule(sessionRole === "Officer" ? "assignedDeck" : "queue");
       }
@@ -1591,6 +1602,28 @@ export default function App() {
       await refreshDashboard();
     } catch (error) {
       setBanner(`Stop patrol simulation failed: ${(error as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleRunLiveSimulationTick() {
+    setLoading(true);
+    try {
+      const result = await fetchJson<{ advanced: boolean; reason?: string; active_incidents?: number; calls_generated_this_tick?: number }>(
+        "/api/v1/intake/patrol-sim/tick",
+        { method: "POST" }
+      );
+      if (!result.advanced) {
+        setBanner(`Live simulation tick skipped: ${result.reason ?? "interval gate"}.`);
+      } else {
+        setBanner(
+          `Live simulation tick advanced. Active calls ${result.active_incidents ?? 0} · New calls this tick ${result.calls_generated_this_tick ?? 0}.`
+        );
+      }
+      await refreshDashboard();
+    } catch (error) {
+      setBanner(`Live simulation tick failed: ${(error as Error).message}`);
     } finally {
       setLoading(false);
     }
@@ -2297,6 +2330,17 @@ export default function App() {
 
   const recentTimeline = (incidentDetail?.timeline ?? []).slice(0, 4);
   const liveSimulationRunning = Boolean(patrolStatus?.enabled && patrolStatus.profile === "LIVE_DEV");
+  const liveCallsReceived = patrolStatus?.calls_received ?? patrolStatus?.calls_generated ?? 0;
+  const liveUnitsAssigned = patrolStatus?.calls_assigned ?? patrolStatus?.calls_auto_assigned ?? 0;
+  const liveCallsResolved = patrolStatus?.calls_resolved ?? 0;
+  const liveActiveCalls = patrolStatus?.active_incidents ?? queue.length;
+  const liveRoster = useMemo(
+    () =>
+      (mapData?.units ?? units)
+        .filter((unit) => unit.shift !== "OFF_DUTY")
+        .sort((a, b) => a.callsign.localeCompare(b.callsign)),
+    [mapData?.units, units]
+  );
   const isDispatcher = sessionRole === "Dispatcher";
   const isOfficer = sessionRole === "Officer";
   const isSupervisor = sessionRole === "Supervisor";
@@ -2630,20 +2674,74 @@ export default function App() {
 
       <section className="live-sim-strip">
         <button
-          className={`live-sim-cta ${liveSimulationRunning ? "active" : ""}`}
+          className={`live-sim-cta ${liveSimPanelOpen ? "active" : ""}`}
+          type="button"
+          onClick={() => setLiveSimPanelOpen((prev) => !prev)}
+          disabled={loading}
+        >
+          {liveSimPanelOpen ? "Hide Live Simulation" : "Open Live Simulation"}
+        </button>
+        <button
+          className={`dispatch-secondary live-sim-toggle ${liveSimulationRunning ? "active" : ""}`}
           type="button"
           onClick={handleToggleLiveSimulation}
           disabled={loading}
         >
-          {liveSimulationRunning ? "Stop Live Simulation" : "Start Live Simulation"}
+          {liveSimulationRunning ? "Stop Run" : "Start Run"}
         </button>
         <div className="live-sim-meta">
           <strong>{liveSimulationRunning ? "LIVE DEV RUNNING" : "Simulation Offline"}</strong>
           <p>
-            Patrol units: {patrolStatus?.dispatchable_units ?? 0} · Active calls: {patrolStatus?.active_incidents ?? 0}/{patrolStatus?.max_active_calls ?? 10} · Tick {patrolStatus?.tick_index ?? 0}
+            Patrol units: {patrolStatus?.dispatchable_units ?? 0} · Active calls: {liveActiveCalls}/{patrolStatus?.max_active_calls ?? 10} · Tick {patrolStatus?.tick_index ?? 0}
           </p>
         </div>
       </section>
+      {liveSimPanelOpen ? (
+        <section className="live-sim-panel card panel">
+          <div className="live-sim-panel-head">
+            <h2>Live Simulation Console</h2>
+            <div className="button-grid">
+              <button type="button" onClick={handleToggleLiveSimulation} disabled={loading}>
+                {liveSimulationRunning ? "Stop Live Simulation" : "Start Live Simulation"}
+              </button>
+              <button type="button" onClick={handleRunLiveSimulationTick} disabled={loading || !patrolStatus?.enabled}>
+                Force Tick
+              </button>
+            </div>
+          </div>
+          <div className="kpi-grid live-sim-kpis">
+            <div className="kpi"><span>Calls Received</span><strong>{liveCallsReceived}</strong></div>
+            <div className="kpi"><span>Units Assigned</span><strong>{liveUnitsAssigned}</strong></div>
+            <div className="kpi"><span>Calls Resolved</span><strong>{liveCallsResolved}</strong></div>
+            <div className="kpi"><span>Active Calls</span><strong>{liveActiveCalls}</strong></div>
+          </div>
+          <div className="dispatch-banner">
+            Call catalog: {patrolStatus?.call_types_loaded ?? 0} call types · {patrolStatus?.call_locations_loaded ?? 0} Redlands locations · Next call due {patrolStatus?.next_call_due_at ?? "pending"}
+          </div>
+          <div className="live-sim-roster">
+            <h3>Officers On Shift</h3>
+            <div className="timeline-list">
+              {liveRoster.map((unit) => (
+                <div key={unit.unit_id} className="timeline-item">
+                  <strong>{unit.callsign} · {unit.officer_name ?? "Unassigned"}</strong>
+                  <p>{unit.role} · {unit.shift ?? "N/A"} · Beat {unit.beat ?? "N/A"} · {unit.status}</p>
+                  <p>{unit.coordinates.lat.toFixed(5)}, {unit.coordinates.lon.toFixed(5)}</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!mapRef.current) return;
+                      mapRef.current.flyTo({ center: [unit.coordinates.lon, unit.coordinates.lat], zoom: 14, speed: 0.8 });
+                    }}
+                  >
+                    Center On Map
+                  </button>
+                </div>
+              ))}
+              {liveRoster.length === 0 ? <div className="dispatch-banner warn">No units loaded.</div> : null}
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       <div className="chip-row">
         {activeModule === "mapOnly" ? <span className="chip ok">Map-only workspace active</span> : null}

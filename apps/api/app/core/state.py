@@ -98,6 +98,7 @@ class InMemoryState:
             "last_call": None,
             "calls_generated": 0,
             "calls_auto_assigned": 0,
+            "calls_resolved": 0,
             "min_call_interval_seconds": 30,
             "max_call_interval_seconds": 120,
             "max_active_calls": 10,
@@ -262,6 +263,7 @@ class InMemoryState:
                 "last_call": None,
                 "calls_generated": 0,
                 "calls_auto_assigned": 0,
+                "calls_resolved": 0,
                 "min_call_interval_seconds": 30,
                 "max_call_interval_seconds": 120,
                 "max_active_calls": 10,
@@ -296,6 +298,7 @@ class InMemoryState:
                 self._patrol_simulation["last_call"] = None
                 self._patrol_simulation["calls_generated"] = 0
                 self._patrol_simulation["calls_auto_assigned"] = 0
+                self._patrol_simulation["calls_resolved"] = 0
                 self._patrol_simulation["next_call_due_at"] = None
             else:
                 self._patrol_simulation["last_tick"] = utc_now_iso()
@@ -320,12 +323,20 @@ class InMemoryState:
                 self._patrol_simulation["calls_auto_assigned"] += 1
             self._patrol_simulation["last_call"] = utc_now_iso()
 
+    def mark_patrol_call_resolved(self) -> None:
+        with self._lock:
+            self._patrol_simulation["calls_resolved"] = int(
+                self._patrol_simulation.get("calls_resolved", 0)
+            ) + 1
+
     def patrol_simulation_status(self) -> dict:
         with self._lock:
             dispatchable_units = [u for u in self._units.values() if u.dispatchable]
             senior_units = [u for u in self._units.values() if not u.dispatchable]
             beats = sorted({u.beat for u in dispatchable_units if u.beat is not None})
             active_incidents = [i for i in self._incidents.values() if i["status"] != "CLOSED"]
+            calls_received = int(self._patrol_simulation.get("calls_generated", 0))
+            calls_assigned = int(self._patrol_simulation.get("calls_auto_assigned", 0))
             return {
                 **self._patrol_simulation.copy(),
                 "tick_index": self._sim_tick,
@@ -333,6 +344,8 @@ class InMemoryState:
                 "senior_units": len(senior_units),
                 "beats_active": beats,
                 "active_incidents": len(active_incidents),
+                "calls_received": calls_received,
+                "calls_assigned": calls_assigned,
             }
 
     def find_duplicate_incidents(self, normalized_address: str) -> list[str]:

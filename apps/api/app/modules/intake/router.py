@@ -57,3 +57,8 @@ def stop_patrol_sim() -> dict:
 @router.get("/patrol-sim/status")
 def get_patrol_sim_status() -> dict:
     return patrol_simulation_status()
+
+
+@router.post("/patrol-sim/tick")
+def run_patrol_sim_tick() -> dict:
+    return advance_patrol_simulation(force=True)
