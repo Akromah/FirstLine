@@ -29,6 +29,12 @@ type ReportDraft = {
   updated_at: string;
   evidence_links?: Array<{ type: string; uri: string; added_at?: string }>;
 };
+type ReportDraftDetail = ReportDraft & {
+  structured_fields?: Record<string, string>;
+  template_id?: string | null;
+  review_status?: string;
+  review_notes?: string | null;
+};
 type ReportingHub = { drafts: ReportDraft[]; missing_reports: Array<{ incident_id: string; call_type: string; priority: number }> };
 type ReportingMetrics = {
   total_reports: number;
@@ -1095,6 +1101,26 @@ export default function App() {
     }
   }
 
+  async function handleLoadDraft(reportId: string) {
+    setLoading(true);
+    try {
+      const draft = await fetchJson<ReportDraftDetail>(`/api/v1/reporting/draft/${reportId}`);
+      setStatusUnitId(draft.unit_id);
+      setReportNarrative(draft.narrative ?? "");
+      setReportFields(serializeFields(draft.structured_fields ?? {}));
+      setSelectedTemplateId(draft.template_id || "GENERAL_INCIDENT");
+      setReportEvidence(draft.evidence_links ?? []);
+      setSelectedIncidentId(draft.incident_id);
+      setReportSummary(`Loaded draft ${draft.report_id} (${draft.status}).`);
+      setActiveModule("reportHub");
+      await refreshDashboard();
+    } catch (error) {
+      setBanner(`Load draft failed: ${(error as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function handleStartDictation() {
     if (!dictationSupported || !dictationRef.current || isDictating) return;
     try {
@@ -1892,13 +1918,33 @@ export default function App() {
               <div className="hub-col">
                 <h3>Drafts</h3>
                 {(reportHub?.drafts ?? []).slice(0, 4).map((draft) => (
-                  <div key={draft.report_id} className="hub-row"><strong>{draft.report_id}</strong><p>{draft.incident_id} - {draft.status}</p></div>
+                  <button key={draft.report_id} type="button" className="list-row static" onClick={() => handleLoadDraft(draft.report_id)}>
+                    <div>
+                      <strong>{draft.report_id}</strong>
+                      <p>{draft.incident_id} - {draft.status}</p>
+                    </div>
+                    <span className="badge soft">Load</span>
+                  </button>
                 ))}
               </div>
               <div className="hub-col">
                 <h3>Missing Reports</h3>
                 {(reportHub?.missing_reports ?? []).slice(0, 4).map((item) => (
-                  <div key={item.incident_id} className="hub-row"><strong>{item.incident_id}</strong><p>{item.call_type} P{item.priority}</p></div>
+                  <button
+                    key={item.incident_id}
+                    type="button"
+                    className="list-row static"
+                    onClick={() => {
+                      setSelectedIncidentId(item.incident_id);
+                      setReportSummary(`Switched to incident ${item.incident_id} from missing reports.`);
+                    }}
+                  >
+                    <div>
+                      <strong>{item.incident_id}</strong>
+                      <p>{item.call_type} P{item.priority}</p>
+                    </div>
+                    <span className="badge soft">Open</span>
+                  </button>
                 ))}
               </div>
             </div>
