@@ -252,6 +252,24 @@ type ModulePanel =
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
 const MAP_STYLE_URL =
   import.meta.env.VITE_MAP_STYLE_URL ?? "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
+const MAP_FALLBACK_STYLE = {
+  version: 8,
+  sources: {
+    osm: {
+      type: "raster",
+      tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+      tileSize: 256,
+      attribution: "© OpenStreetMap contributors",
+    },
+  },
+  layers: [
+    {
+      id: "osm-raster",
+      type: "raster",
+      source: "osm",
+    },
+  ],
+};
 const PREFS_KEY = "firstline_ui_prefs_v1";
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -309,6 +327,8 @@ export default function App() {
   const [priorityBoard, setPriorityBoard] = useState<PriorityRadar | null>(null);
   const [mapData, setMapData] = useState<any>(null);
   const [mapReady, setMapReady] = useState(false);
+  const [mapStyleMode, setMapStyleMode] = useState<"primary" | "fallback">("primary");
+  const [mapStatusMessage, setMapStatusMessage] = useState("Loading map style...");
   const [reportHub, setReportHub] = useState<ReportingHub | null>(null);
   const [reportingMetrics, setReportingMetrics] = useState<ReportingMetrics | null>(null);
   const [reviewQueue, setReviewQueue] = useState<ReviewQueue | null>(null);
@@ -407,6 +427,7 @@ export default function App() {
   const mapRef = useRef<any>(null);
   const mapLibRef = useRef<any>(null);
   const markerRefs = useRef<any[]>([]);
+  const mapFallbackTriedRef = useRef(false);
   const selectedIncidentIdRef = useRef(selectedIncidentId);
   const statusUnitIdRef = useRef(statusUnitId);
   const dictationRef = useRef<any>(null);
@@ -582,6 +603,8 @@ export default function App() {
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
     let canceled = false;
+    let styleLoaded = false;
+    let loadWatchdog: number | null = null;
     import("maplibre-gl").then((module) => {
       if (canceled || !mapContainerRef.current || mapRef.current) return;
       const maplibregl = module.default;
@@ -594,17 +617,50 @@ export default function App() {
         attributionControl: false,
       });
       mapRef.current = map;
-      setMapReady(true);
+
+      const switchToFallback = (reason: string) => {
+        if (mapFallbackTriedRef.current || !mapRef.current) return;
+        mapFallbackTriedRef.current = true;
+        setMapReady(false);
+        setMapStyleMode("fallback");
+        setMapStatusMessage("Fallback map style active.");
+        setBanner(`Primary map style unavailable (${reason}). Switched to fallback tiles.`);
+        try {
+          mapRef.current.setStyle(MAP_FALLBACK_STYLE as any);
+        } catch {
+          setBanner("Map fallback style also failed to load.");
+        }
+      };
+
+      map.on("load", () => {
+        styleLoaded = true;
+        setMapReady(true);
+        setMapStatusMessage(mapFallbackTriedRef.current ? "Fallback map style active." : "Primary map style active.");
+        map.resize();
+      });
+
+      map.on("error", (event: any) => {
+        if (styleLoaded || mapFallbackTriedRef.current) return;
+        const message = String(event?.error?.message ?? "style/tile load error");
+        switchToFallback(message);
+      });
+
+      loadWatchdog = window.setTimeout(() => {
+        if (!styleLoaded) switchToFallback("load timeout");
+      }, 9000);
     }).catch(() => {
       setBanner("Map library failed to load.");
+      setMapStatusMessage("Map library failed to load.");
     });
     return () => {
       canceled = true;
+      if (loadWatchdog) window.clearTimeout(loadWatchdog);
       markerRefs.current.forEach((marker) => marker.remove());
       markerRefs.current = [];
       mapRef.current?.remove();
       mapRef.current = null;
       mapLibRef.current = null;
+      mapFallbackTriedRef.current = false;
       setMapReady(false);
     };
   }, []);
@@ -1519,6 +1575,19 @@ export default function App() {
     }
   }
 
+  function handleRetryPrimaryMapStyle() {
+    if (!mapRef.current) return;
+    try {
+      mapFallbackTriedRef.current = false;
+      setMapReady(false);
+      setMapStyleMode("primary");
+      setMapStatusMessage("Retrying primary map style...");
+      mapRef.current.setStyle(MAP_STYLE_URL);
+    } catch {
+      setBanner("Unable to retry primary map style.");
+    }
+  }
+
   async function handleAiDispositionDraft() {
     if (!selectedIncident) return;
     setLoading(true);
@@ -1679,6 +1748,18 @@ export default function App() {
   });
 
   useEffect(() => {
+    if (!mapRef.current) return;
+    const timer = window.setTimeout(() => {
+      try {
+        mapRef.current?.resize();
+      } catch {
+        // Ignore transient map resize errors.
+      }
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [activeModule, mapFocusMode, rightColumnActive]);
+
+  useEffect(() => {
     const visibleModules = moduleButtons.filter((item) => item.visible).map((item) => item.id);
     if (visibleModules.length === 0) return;
     if (!visibleModules.includes(activeModule)) setActiveModule(visibleModules[0]);
@@ -1834,8 +1915,12 @@ export default function App() {
             <div className="toggle-row">
               <label><input type="checkbox" checked={showMapUnits} onChange={(e) => setShowMapUnits(e.target.checked)} /> Units</label>
               <label><input type="checkbox" checked={showMapIncidents} onChange={(e) => setShowMapIncidents(e.target.checked)} /> Incidents</label>
+              <span className={`chip ${mapStyleMode === "fallback" ? "warn" : "ok"}`}>{mapStatusMessage}</span>
               <button type="button" className="dispatch-secondary" onClick={() => setMapFocusMode((prev) => !prev)}>
                 {mapFocusMode ? "Exit Map Focus" : "Map Focus"}
+              </button>
+              <button type="button" className="dispatch-secondary" onClick={handleRetryPrimaryMapStyle}>
+                Retry Primary Map
               </button>
               <button
                 type="button"
