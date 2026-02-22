@@ -328,7 +328,7 @@ export default function App() {
   const [mapData, setMapData] = useState<any>(null);
   const [mapReady, setMapReady] = useState(false);
   const [mapStyleMode, setMapStyleMode] = useState<"primary" | "fallback">("primary");
-  const [mapStatusMessage, setMapStatusMessage] = useState("Loading map style...");
+  const [mapStatusMessage, setMapStatusMessage] = useState("Map not initialized.");
   const [reportHub, setReportHub] = useState<ReportingHub | null>(null);
   const [reportingMetrics, setReportingMetrics] = useState<ReportingMetrics | null>(null);
   const [reviewQueue, setReviewQueue] = useState<ReviewQueue | null>(null);
@@ -601,10 +601,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!started) return;
     if (!mapContainerRef.current || mapRef.current) return;
     let canceled = false;
     let styleLoaded = false;
     let loadWatchdog: number | null = null;
+    setMapStatusMessage("Loading map style...");
     import("maplibre-gl").then((module) => {
       if (canceled || !mapContainerRef.current || mapRef.current) return;
       const maplibregl = module.default;
@@ -632,12 +634,15 @@ export default function App() {
         }
       };
 
-      map.on("load", () => {
+      const onStyleReady = () => {
         styleLoaded = true;
         setMapReady(true);
         setMapStatusMessage(mapFallbackTriedRef.current ? "Fallback map style active." : "Primary map style active.");
         map.resize();
-      });
+      };
+
+      map.on("load", onStyleReady);
+      map.on("style.load", onStyleReady);
 
       map.on("error", (event: any) => {
         if (styleLoaded || mapFallbackTriedRef.current) return;
@@ -662,8 +667,9 @@ export default function App() {
       mapLibRef.current = null;
       mapFallbackTriedRef.current = false;
       setMapReady(false);
+      setMapStatusMessage("Map not initialized.");
     };
-  }, []);
+  }, [started]);
 
   useEffect(() => {
     if (!mapReady || !mapRef.current || !mapData || !mapLibRef.current) return;
