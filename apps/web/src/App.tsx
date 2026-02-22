@@ -52,6 +52,17 @@ type MessageInbox = {
   unread_estimate: number;
   messages: MessageThread[];
 };
+type OfficerFeed = {
+  unit_id: string;
+  assigned_incidents: Array<{
+    incident_id: string;
+    call_type: string;
+    priority: number;
+    address: string;
+    status: string;
+    history_at_address: string[];
+  }>;
+};
 type AIReportAssist = {
   improved_narrative: string;
   key_points: string[];
@@ -158,6 +169,7 @@ export default function App() {
   const [dictationStatus, setDictationStatus] = useState("Dictation idle.");
   const [dictationInterim, setDictationInterim] = useState("");
   const [messageInbox, setMessageInbox] = useState<MessageInbox | null>(null);
+  const [officerFeed, setOfficerFeed] = useState<OfficerFeed | null>(null);
   const [messageTarget, setMessageTarget] = useState("DISPATCH");
   const [messageBody, setMessageBody] = useState("");
   const [messageStatus, setMessageStatus] = useState("");
@@ -186,19 +198,25 @@ export default function App() {
   }, [statusUnitId]);
 
   useEffect(() => {
-    async function loadInbox() {
+    async function loadOfficerPanels() {
       if (!statusUnitId) {
         setMessageInbox(null);
+        setOfficerFeed(null);
         return;
       }
       try {
-        const inbox = await fetchJson<MessageInbox>(`/api/v1/officer/messages/${statusUnitId}?limit=12`);
+        const [inbox, feed] = await Promise.all([
+          fetchJson<MessageInbox>(`/api/v1/officer/messages/${statusUnitId}?limit=12`),
+          fetchJson<OfficerFeed>(`/api/v1/officer/feed/${statusUnitId}`),
+        ]);
         setMessageInbox(inbox);
+        setOfficerFeed(feed);
       } catch {
         setMessageInbox(null);
+        setOfficerFeed(null);
       }
     }
-    loadInbox();
+    loadOfficerPanels();
   }, [statusUnitId]);
 
   useEffect(() => {
@@ -209,16 +227,20 @@ export default function App() {
 
   async function refreshDashboard() {
     try {
+      const feedPromise = statusUnitIdRef.current
+        ? fetchJson<OfficerFeed>(`/api/v1/officer/feed/${statusUnitIdRef.current}`).catch(() => null)
+        : Promise.resolve(null);
       const inboxPromise = statusUnitIdRef.current
         ? fetchJson<MessageInbox>(`/api/v1/officer/messages/${statusUnitIdRef.current}?limit=12`).catch(() => null)
         : Promise.resolve(null);
-      const [q, u, c, m, h, inbox] = await Promise.all([
+      const [q, u, c, m, h, inbox, feed] = await Promise.all([
         fetchJson<{ incidents: IncidentSummary[] }>("/api/v1/dispatch/queue"),
         fetchJson<{ units: UnitSummary[] }>("/api/v1/dispatch/units"),
         fetchJson<any>("/api/v1/command/overview"),
         fetchJson<any>("/api/v1/map/overview"),
         fetchJson<ReportingHub>("/api/v1/reporting/hub"),
         inboxPromise,
+        feedPromise,
       ]);
       setQueue(q.incidents);
       setUnits(u.units);
@@ -226,6 +248,7 @@ export default function App() {
       setMapData(m);
       setReportHub(h);
       setMessageInbox(inbox);
+      setOfficerFeed(feed);
       if (!selectedIncidentIdRef.current && q.incidents.length > 0) setSelectedIncidentId(q.incidents[0].incident_id);
       if (!statusUnitIdRef.current && u.units.length > 0) setStatusUnitId(u.units[0].unit_id);
     } catch (error) {
@@ -397,6 +420,35 @@ export default function App() {
       dictationRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (!started || viewMode !== "Field") return;
+      const active = document.activeElement?.tagName;
+      if (active === "INPUT" || active === "TEXTAREA" || active === "SELECT") return;
+
+      const key = event.key.toLowerCase();
+      if (key === "a") {
+        event.preventDefault();
+        handleOfficerAction("ACCEPT");
+      }
+      if (key === "e") {
+        event.preventDefault();
+        handleOfficerAction("EN_ROUTE");
+      }
+      if (key === "o") {
+        event.preventDefault();
+        handleOfficerAction("ON_SCENE");
+      }
+      if (key === "c") {
+        event.preventDefault();
+        handleOfficerAction("CLEAR");
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [started, viewMode, selectedIncident?.incident_id, statusUnitId]);
 
   async function handleCreateCall(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -833,6 +885,26 @@ export default function App() {
                 </div>
               ))}
             </div>
+          </article>
+          ) : null}
+          {showField ? (
+          <article className="card panel">
+            <h2>Assigned Call Deck</h2>
+            <p className="section-subtitle">Keyboard shortcuts: A Accept · E En Route · O On Scene · C Clear</p>
+            {(officerFeed?.assigned_incidents ?? []).length === 0 ? <div className="dispatch-banner">No active assignments for {statusUnitId}.</div> : null}
+            {(officerFeed?.assigned_incidents ?? []).map((call) => (
+              <div key={call.incident_id} className="hub-row">
+                <strong>{call.incident_id} · {call.call_type} · P{call.priority}</strong>
+                <p>{call.address} · {call.status}</p>
+                <p>History: {call.history_at_address.join(" | ")}</p>
+                <div className="call-actions">
+                  <button type="button" onClick={() => { setSelectedIncidentId(call.incident_id); handleOfficerAction("ACCEPT"); }} disabled={loading}>Accept</button>
+                  <button type="button" onClick={() => { setSelectedIncidentId(call.incident_id); handleOfficerAction("EN_ROUTE"); }} disabled={loading}>En Route</button>
+                  <button type="button" onClick={() => { setSelectedIncidentId(call.incident_id); handleOfficerAction("ON_SCENE"); }} disabled={loading}>On Scene</button>
+                  <button type="button" onClick={() => { setSelectedIncidentId(call.incident_id); handleOfficerAction("CLEAR"); }} disabled={loading}>Clear</button>
+                </div>
+              </div>
+            ))}
           </article>
           ) : null}
           {(showReport || showField || showDispatch) ? (
