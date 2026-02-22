@@ -657,6 +657,34 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [started, viewMode, selectedIncident?.incident_id, statusUnitId]);
 
+  useEffect(() => {
+    function onGlobalKeyDown(event: KeyboardEvent) {
+      if (!started || !event.altKey) return;
+      const active = document.activeElement?.tagName;
+      if (active === "INPUT" || active === "TEXTAREA" || active === "SELECT") return;
+
+      if (event.key === "1") {
+        event.preventDefault();
+        setViewMode("Dispatch");
+      }
+      if (event.key === "2") {
+        event.preventDefault();
+        setViewMode("Field");
+      }
+      if (event.key === "3") {
+        event.preventDefault();
+        setViewMode("Report");
+      }
+      if (event.key === "4") {
+        event.preventDefault();
+        setViewMode("Intel");
+      }
+    }
+
+    window.addEventListener("keydown", onGlobalKeyDown);
+    return () => window.removeEventListener("keydown", onGlobalKeyDown);
+  }, [started]);
+
   async function handleCreateCall(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
@@ -1568,6 +1596,12 @@ export default function App() {
             </div>
           </article>
           ) : null}
+
+          <article className="card panel">
+            <h2>Hotkeys</h2>
+            <div className="hub-row"><strong>View Navigation</strong><p>Alt+1 Dispatch · Alt+2 Field · Alt+3 Report · Alt+4 Intel</p></div>
+            <div className="hub-row"><strong>Field Actions</strong><p>A Accept · E En Route · O On Scene · C Clear</p></div>
+          </article>
         </aside>
       </main>
 
