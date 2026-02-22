@@ -27,6 +27,10 @@ def test_intake_dispatch_reporting_flow() -> None:
     queue_payload = queue_response.json()
     assert any(incident["incident_id"] == incident_id for incident in queue_payload["incidents"])
 
+    demo_response = client.post("/api/v1/intake/demo", json={"scenario": "SHIFT_START"})
+    assert demo_response.status_code == 200
+    assert demo_response.json()["created_count"] == 3
+
     unit_board_response = client.get("/api/v1/dispatch/unit-board")
     assert unit_board_response.status_code == 200
     assert len(unit_board_response.json()["units"]) >= 1

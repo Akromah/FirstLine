@@ -199,6 +199,7 @@ export default function App() {
   const [lat, setLat] = useState("34.0556");
   const [lon, setLon] = useState("-117.1825");
   const [callText, setCallText] = useState("Neighbors reporting loud domestic dispute, possible weapon.");
+  const [demoScenario, setDemoScenario] = useState("SHIFT_START");
 
   const [dispositionCode, setDispositionCode] = useState("WARNING_ISSUED");
   const [dispositionSummary, setDispositionSummary] = useState("Scene stabilized and verbal warning issued.");
@@ -581,6 +582,23 @@ export default function App() {
       await refreshDashboard();
     } catch (error) {
       setBanner(`Call intake failed: ${(error as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleLaunchDemoScenario() {
+    setLoading(true);
+    try {
+      const result = await fetchJson<{ scenario: string; created_count: number; incidents: Array<{ incident_id: string; call_type: string; priority: number }> }>("/api/v1/intake/demo", {
+        method: "POST",
+        body: JSON.stringify({ scenario: demoScenario }),
+      });
+      setBanner(`Demo scenario ${result.scenario} created ${result.created_count} incidents.`);
+      if (result.incidents.length > 0) setSelectedIncidentId(result.incidents[0].incident_id);
+      await refreshDashboard();
+    } catch (error) {
+      setBanner(`Demo scenario failed: ${(error as Error).message}`);
     } finally {
       setLoading(false);
     }
@@ -1006,6 +1024,21 @@ export default function App() {
               <label className="form-field wide">Call Notes<textarea value={callText} onChange={(e) => setCallText(e.target.value)} /></label>
               <div className="form-actions form-field wide"><button className="dispatch-primary" type="submit" disabled={loading}>{loading ? "Submitting..." : "Create Intake Call"}</button></div>
             </form>
+            <div className="template-row">
+              <label className="form-field">
+                Demo Scenario
+                <select value={demoScenario} onChange={(e) => setDemoScenario(e.target.value)}>
+                  <option value="SHIFT_START">SHIFT_START</option>
+                  <option value="HIGH_RISK_NIGHT">HIGH_RISK_NIGHT</option>
+                </select>
+              </label>
+              <div className="form-field">
+                <span>Stage Investor Demo Data</span>
+                <button type="button" className="dispatch-secondary" onClick={handleLaunchDemoScenario} disabled={loading}>
+                  Launch Scenario
+                </button>
+              </div>
+            </div>
             <div className="dispatch-banner">{banner}</div>
           </article>
           ) : null}

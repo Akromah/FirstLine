@@ -1,9 +1,11 @@
 from fastapi import APIRouter, HTTPException
 
 from app.modules.intake.service import (
+    DemoScenarioRequest,
     IntakeRequest,
     IntakeResponse,
     get_incident_risk_profile,
+    launch_demo_scenario,
     process_intake,
 )
 
@@ -21,3 +23,8 @@ def get_risk_profile(incident_id: str) -> dict:
     if not profile:
         raise HTTPException(status_code=404, detail="Incident not found")
     return profile
+
+
+@router.post("/demo")
+def run_demo_scenario(payload: DemoScenarioRequest) -> dict:
+    return launch_demo_scenario(payload)

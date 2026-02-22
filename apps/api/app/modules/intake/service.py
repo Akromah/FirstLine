@@ -27,6 +27,10 @@ class IntakeResponse(BaseModel):
     created_at: str
 
 
+class DemoScenarioRequest(BaseModel):
+    scenario: str = "SHIFT_START"
+
+
 def score_priority(call_text: str, address: str | None) -> tuple[int, list[str]]:
     text = call_text.lower()
     score = 30
@@ -127,3 +131,81 @@ def process_intake(payload: IntakeRequest) -> IntakeResponse:
 
 def get_incident_risk_profile(incident_id: str) -> dict | None:
     return state.build_risk_profile(incident_id)
+
+
+def launch_demo_scenario(payload: DemoScenarioRequest) -> dict:
+    scenario = payload.scenario.strip().upper()
+    templates: list[dict] = []
+
+    if scenario == "HIGH_RISK_NIGHT":
+        templates = [
+            {
+                "caller_name": "Store Clerk",
+                "phone": "555-0101",
+                "call_text": "Armed suspect with handgun fleeing convenience store after robbery.",
+                "address": "120 Brookside Ave, Redlands",
+                "lat": 34.0471,
+                "lon": -117.1828,
+            },
+            {
+                "caller_name": "Resident",
+                "phone": "555-0102",
+                "call_text": "Domestic fight escalating, child heard screaming, possible knife.",
+                "address": "35 Cajon St, Redlands",
+                "lat": 34.0556,
+                "lon": -117.1825,
+            },
+            {
+                "caller_name": "Campus Security",
+                "phone": "555-0103",
+                "call_text": "Possible overdose, not breathing outside university library.",
+                "address": "550 University St, Redlands",
+                "lat": 34.0643,
+                "lon": -117.1634,
+            },
+        ]
+    else:
+        templates = [
+            {
+                "caller_name": "Transit Control",
+                "phone": "555-0201",
+                "call_text": "Minor traffic collision blocking lane, no injuries reported.",
+                "address": "700 Orange St, Redlands",
+                "lat": 34.0532,
+                "lon": -117.1762,
+            },
+            {
+                "caller_name": "Neighbor",
+                "phone": "555-0202",
+                "call_text": "Loud argument between partners, requesting Spanish-speaking officer.",
+                "address": "910 Olive Ave, Redlands",
+                "lat": 34.0503,
+                "lon": -117.1716,
+            },
+            {
+                "caller_name": "Teacher",
+                "phone": "555-0203",
+                "call_text": "Suspicious person near school entrance taking photos of students.",
+                "address": "405 Schoolhouse Rd, Redlands",
+                "lat": 34.0589,
+                "lon": -117.1667,
+            },
+        ]
+
+    created: list[dict] = []
+    for item in templates:
+        response = process_intake(IntakeRequest(**item))
+        created.append(
+            {
+                "incident_id": response.call_id,
+                "call_type": response.suggested_call_type,
+                "priority": response.auto_priority_score,
+                "address": response.normalized_address,
+            }
+        )
+
+    return {
+        "scenario": scenario,
+        "created_count": len(created),
+        "incidents": created,
+    }
