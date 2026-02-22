@@ -92,8 +92,16 @@ type PatrolSimulationStatus = {
   tick_seconds: number;
   last_tick?: string | null;
   last_call?: string | null;
+  next_call_due_at?: string | null;
   calls_generated: number;
   calls_auto_assigned: number;
+  min_call_interval_seconds?: number;
+  max_call_interval_seconds?: number;
+  max_active_calls?: number;
+  min_call_duration_seconds?: number;
+  max_call_duration_seconds?: number;
+  logged_in_unit_id?: string | null;
+  timed_incidents?: number;
   tick_index: number;
   dispatchable_units: number;
   senior_units: number;
@@ -734,7 +742,9 @@ export default function App() {
       setOfficerFeed(feed);
       setIncidentChannel(channel);
       if (!selectedIncidentIdRef.current && q.incidents.length > 0) setSelectedIncidentId(q.incidents[0].incident_id);
-      if (!statusUnitIdRef.current && u.units.length > 0) setStatusUnitId(u.units[0].unit_id);
+      if (u.units.length > 0 && (!statusUnitIdRef.current || !u.units.some((item) => item.unit_id === statusUnitIdRef.current))) {
+        setStatusUnitId(u.units[0].unit_id);
+      }
     } catch (error) {
       setBanner(`API sync failed: ${(error as Error).message}`);
     }
@@ -1309,6 +1319,7 @@ export default function App() {
           clear_existing: true,
           tick_seconds: patrolTickSeconds,
           initial_calls: patrolInitialCalls,
+          live_mode: false,
         }),
       });
       setBanner(
@@ -1318,6 +1329,46 @@ export default function App() {
       await refreshDashboard();
     } catch (error) {
       setBanner(`Patrol simulation failed: ${(error as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleToggleLiveSimulation() {
+    const liveRunning = Boolean(patrolStatus?.enabled && patrolStatus.profile === "LIVE_DEV");
+    setLoading(true);
+    try {
+      if (liveRunning) {
+        await fetchJson<{ stopped: boolean }>("/api/v1/intake/patrol-sim/stop", { method: "POST" });
+        setBanner("Live simulation stopped.");
+      } else {
+        const result = await fetchJson<{
+          dispatchable_units: number;
+          max_active_calls: number;
+          next_call_due_at?: string | null;
+        }>("/api/v1/intake/patrol-sim/start", {
+          method: "POST",
+          body: JSON.stringify({
+            clear_existing: true,
+            live_mode: true,
+            tick_seconds: 10,
+            initial_calls: 2,
+            logged_in_unit_id: statusUnitId || null,
+            min_call_interval_seconds: 30,
+            max_call_interval_seconds: 120,
+            max_active_calls: 10,
+            min_call_duration_seconds: 60,
+            max_call_duration_seconds: 600,
+          }),
+        });
+        setBanner(
+          `Live simulation active: ${result.dispatchable_units} units, max ${result.max_active_calls} active calls.`
+        );
+        setActiveModule("queue");
+      }
+      await refreshDashboard();
+    } catch (error) {
+      setBanner(`Live simulation toggle failed: ${(error as Error).message}`);
     } finally {
       setLoading(false);
     }
@@ -1966,6 +2017,7 @@ export default function App() {
   }
 
   const recentTimeline = (incidentDetail?.timeline ?? []).slice(0, 4);
+  const liveSimulationRunning = Boolean(patrolStatus?.enabled && patrolStatus.profile === "LIVE_DEV");
   const showDispatch = viewMode === "Dispatch";
   const showField = viewMode === "Field";
   const showReport = viewMode === "Report";
@@ -2043,6 +2095,14 @@ export default function App() {
       hint: "System",
       run: () => {
         void refreshDashboard();
+      },
+    },
+    {
+      id: "toggle-live-sim",
+      label: liveSimulationRunning ? "Stop live simulation" : "Start live simulation",
+      hint: "Simulation",
+      run: () => {
+        void handleToggleLiveSimulation();
       },
     },
     {
@@ -2139,6 +2199,9 @@ export default function App() {
         </div>
         <div className="top-role-row">
           <span className="role-badge">{sessionRole}</span>
+          <button className="dispatch-secondary" type="button" onClick={handleToggleLiveSimulation} disabled={loading}>
+            {liveSimulationRunning ? "Stop Live Simulation" : "Live Simulation"}
+          </button>
           <button className="dispatch-secondary" type="button" onClick={() => setCommandPaletteOpen(true)}>Cmd Palette</button>
           <button className="dispatch-secondary" type="button" onClick={refreshDashboard}>Refresh</button>
         </div>
@@ -2150,7 +2213,10 @@ export default function App() {
         <span className="chip">Hot zones: {mapData?.hot_zones.length ?? 0}</span>
         <span className="chip">Geofence alerts: {mapData?.geofenced_alerts.filter((item) => item.active).length ?? 0}</span>
         <span className={`chip ${patrolStatus?.enabled ? "ok" : ""}`}>
-          Patrol Sim: {patrolStatus?.enabled ? `LIVE · Tick ${patrolStatus.tick_index}` : "OFF"}
+          Patrol Sim: {patrolStatus?.enabled ? `${patrolStatus.profile} · Tick ${patrolStatus.tick_index}` : "OFF"}
+        </span>
+        <span className="chip">
+          Live Calls: {patrolStatus?.active_incidents ?? 0}/{patrolStatus?.max_active_calls ?? 10}
         </span>
         <span className="chip">Beats active: {patrolStatus?.beats_active.length ?? 0}</span>
         <span className="chip">Units available: {availabilityBoard?.summary.available_count ?? 0}</span>
@@ -2284,11 +2350,16 @@ export default function App() {
                 Stop Simulation
               </button>
             </div>
+            <div className="dev-actions">
+              <button type="button" onClick={handleToggleLiveSimulation} disabled={loading}>
+                {liveSimulationRunning ? "Stop Live Simulation" : "Start Live Simulation"}
+              </button>
+            </div>
             {patrolStatus ? (
               <div className="dispatch-banner">
-                {patrolStatus.enabled ? "Live" : "Paused"} · Dispatchable {patrolStatus.dispatchable_units} · Supervisors{" "}
-                {patrolStatus.senior_units} · Calls generated {patrolStatus.calls_generated} · Auto-assigned{" "}
-                {patrolStatus.calls_auto_assigned}
+                {patrolStatus.enabled ? patrolStatus.profile : "Paused"} · Dispatchable {patrolStatus.dispatchable_units} ·
+                Supervisors {patrolStatus.senior_units} · Calls generated {patrolStatus.calls_generated} · Auto-assigned{" "}
+                {patrolStatus.calls_auto_assigned} · Active {patrolStatus.active_incidents}/{patrolStatus.max_active_calls ?? 10}
               </div>
             ) : null}
             <div className="dispatch-banner">{banner}</div>

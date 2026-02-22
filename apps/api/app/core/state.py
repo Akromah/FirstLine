@@ -98,6 +98,13 @@ class InMemoryState:
             "last_call": None,
             "calls_generated": 0,
             "calls_auto_assigned": 0,
+            "min_call_interval_seconds": 30,
+            "max_call_interval_seconds": 120,
+            "max_active_calls": 10,
+            "min_call_duration_seconds": 60,
+            "max_call_duration_seconds": 600,
+            "next_call_due_at": None,
+            "logged_in_unit_id": None,
         }
         self._seed_initial_incident()
         self._seed_reference_data()
@@ -255,6 +262,13 @@ class InMemoryState:
                 "last_call": None,
                 "calls_generated": 0,
                 "calls_auto_assigned": 0,
+                "min_call_interval_seconds": 30,
+                "max_call_interval_seconds": 120,
+                "max_active_calls": 10,
+                "min_call_duration_seconds": 60,
+                "max_call_duration_seconds": 600,
+                "next_call_due_at": None,
+                "logged_in_unit_id": None,
             }
 
     def set_beat_overlays(self, overlays: list[dict]) -> None:
@@ -265,7 +279,13 @@ class InMemoryState:
         with self._lock:
             return [item.copy() for item in self._beat_overlays]
 
-    def set_patrol_simulation(self, enabled: bool, profile: str = "OFF", tick_seconds: int = 12) -> None:
+    def set_patrol_simulation(
+        self,
+        enabled: bool,
+        profile: str = "OFF",
+        tick_seconds: int = 12,
+        metadata: dict | None = None,
+    ) -> None:
         with self._lock:
             self._patrol_simulation["enabled"] = enabled
             self._patrol_simulation["profile"] = profile
@@ -276,9 +296,17 @@ class InMemoryState:
                 self._patrol_simulation["last_call"] = None
                 self._patrol_simulation["calls_generated"] = 0
                 self._patrol_simulation["calls_auto_assigned"] = 0
+                self._patrol_simulation["next_call_due_at"] = None
             else:
                 self._patrol_simulation["last_tick"] = utc_now_iso()
                 self._patrol_simulation["last_call"] = None
+                self._patrol_simulation["next_call_due_at"] = None
+            if metadata:
+                self._patrol_simulation.update(metadata)
+
+    def update_patrol_simulation(self, **values: object) -> None:
+        with self._lock:
+            self._patrol_simulation.update(values)
 
     def mark_patrol_tick(self) -> None:
         with self._lock:

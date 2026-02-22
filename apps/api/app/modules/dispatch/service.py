@@ -14,6 +14,7 @@ class AssignmentRequest(BaseModel):
     required_skills: list[str] = Field(default_factory=list)
     incident_lat: float
     incident_lon: float
+    exclude_unit_ids: list[str] = Field(default_factory=list)
 
 
 class AssignmentResponse(BaseModel):
@@ -54,8 +55,11 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 def rank_units(payload: AssignmentRequest) -> list[tuple[float, UnitSummary, int, float]]:
     units = get_live_units()
+    excluded = {item.strip().lower() for item in payload.exclude_unit_ids if item and item.strip()}
     ranked = []
     for unit in units:
+        if unit.unit_id.lower() in excluded:
+            continue
         if not unit.dispatchable:
             continue
         requested_skills = {s.lower() for s in payload.required_skills}

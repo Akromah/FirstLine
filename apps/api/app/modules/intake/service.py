@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from math import cos, sin
 from random import Random
 from typing import Literal
@@ -47,6 +47,13 @@ class PatrolSimulationRequest(BaseModel):
     clear_existing: bool = True
     tick_seconds: int = Field(default=12, ge=5, le=60)
     initial_calls: int = Field(default=4, ge=1, le=20)
+    live_mode: bool = False
+    logged_in_unit_id: str | None = None
+    min_call_interval_seconds: int = Field(default=30, ge=15, le=300)
+    max_call_interval_seconds: int = Field(default=120, ge=20, le=600)
+    max_active_calls: int = Field(default=10, ge=3, le=20)
+    min_call_duration_seconds: int = Field(default=60, ge=60, le=600)
+    max_call_duration_seconds: int = Field(default=600, ge=60, le=1800)
 
 
 def score_priority(call_text: str, address: str | None) -> tuple[int, list[str]]:
@@ -525,6 +532,8 @@ PATROL_NAMES_SWING = [
 
 PATROL_RUNTIME = {
     "rng": Random(81),
+    "incident_timers": {},
+    "excluded_unit_id": None,
 }
 
 
@@ -617,23 +626,54 @@ def _create_patrol_units() -> list[UnitSummary]:
     return units
 
 
-def _dispatch_new_incident(incident_id: str) -> bool:
+def _dispatch_new_incident(incident_id: str, excluded_unit_id: str | None = None) -> tuple[bool, str | None]:
     incident = state.get_incident(incident_id)
     if not incident:
-        return False
+        return False, None
     assignment = choose_unit(
         AssignmentRequest(
             incident_id=incident_id,
             required_skills=incident.get("required_skills", []),
             incident_lat=float(incident["coordinates"]["lat"]),
             incident_lon=float(incident["coordinates"]["lon"]),
+            exclude_unit_ids=[excluded_unit_id] if excluded_unit_id else [],
         ),
         commit=True,
     )
-    return assignment.recommended_unit_id != "UNAVAILABLE"
+    if assignment.recommended_unit_id == "UNAVAILABLE":
+        return False, None
+    return True, assignment.recommended_unit_id
 
 
-def _create_patrol_call(template_index: int) -> bool:
+def _register_incident_timer(
+    incident_id: str,
+    unit_id: str,
+    min_call_duration_seconds: int,
+    max_call_duration_seconds: int,
+) -> None:
+    incident = state.get_incident(incident_id)
+    if not incident:
+        return
+    rng: Random = PATROL_RUNTIME["rng"]
+    now = datetime.now(timezone.utc)
+    travel_seconds = rng.randint(35, 120)
+    scene_seconds = rng.randint(min_call_duration_seconds, max_call_duration_seconds)
+    PATROL_RUNTIME["incident_timers"][incident_id] = {
+        "unit_id": unit_id,
+        "target_lat": float(incident["coordinates"]["lat"]),
+        "target_lon": float(incident["coordinates"]["lon"]),
+        "en_route_event_at": (now + timedelta(seconds=max(8, int(travel_seconds * 0.25)))).isoformat().replace("+00:00", "Z"),
+        "on_scene_at": (now + timedelta(seconds=travel_seconds)).isoformat().replace("+00:00", "Z"),
+        "clear_at": (now + timedelta(seconds=travel_seconds + scene_seconds)).isoformat().replace("+00:00", "Z"),
+    }
+
+
+def _create_patrol_call(
+    template_index: int,
+    excluded_unit_id: str | None = None,
+    min_call_duration_seconds: int = 60,
+    max_call_duration_seconds: int = 600,
+) -> dict:
     template = PATROL_CALL_LIBRARY[template_index % len(PATROL_CALL_LIBRARY)]
     beat = _beat_by_id(int(template["beat"]))
     lat_min, lat_max, lon_min, lon_max = _beat_bounds(int(template["beat"]))
@@ -650,9 +690,28 @@ def _create_patrol_call(template_index: int) -> bool:
             lon=lon,
         )
     )
-    assigned = _dispatch_new_incident(intake.call_id)
+    assigned, unit_id = _dispatch_new_incident(intake.call_id, excluded_unit_id=excluded_unit_id)
+    if assigned and unit_id:
+        _register_incident_timer(
+            incident_id=intake.call_id,
+            unit_id=unit_id,
+            min_call_duration_seconds=min_call_duration_seconds,
+            max_call_duration_seconds=max_call_duration_seconds,
+        )
     state.mark_patrol_call_generated(assigned=assigned)
-    return assigned
+    return {"incident_id": intake.call_id, "assigned": assigned, "unit_id": unit_id}
+
+
+def _schedule_next_call_due(min_interval_seconds: int, max_interval_seconds: int) -> str:
+    rng: Random = PATROL_RUNTIME["rng"]
+    due_seconds = rng.randint(min_interval_seconds, max_interval_seconds)
+    due_at = (datetime.now(timezone.utc) + timedelta(seconds=due_seconds)).isoformat().replace("+00:00", "Z")
+    state.update_patrol_simulation(next_call_due_at=due_at)
+    return due_at
+
+
+def _active_incident_count() -> int:
+    return len(state.list_incident_summaries(include_closed=False))
 
 
 def start_patrol_simulation(payload: PatrolSimulationRequest) -> dict:
@@ -663,34 +722,83 @@ def start_patrol_simulation(payload: PatrolSimulationRequest) -> dict:
     for unit in units:
         state.upsert_unit(unit)
 
+    min_call_interval = min(payload.min_call_interval_seconds, payload.max_call_interval_seconds)
+    max_call_interval = max(payload.min_call_interval_seconds, payload.max_call_interval_seconds)
+    min_call_duration = min(payload.min_call_duration_seconds, payload.max_call_duration_seconds)
+    max_call_duration = max(payload.min_call_duration_seconds, payload.max_call_duration_seconds)
+    max_active_calls = max(3, min(payload.max_active_calls, 20))
+
+    PATROL_RUNTIME["incident_timers"] = {}
+    PATROL_RUNTIME["excluded_unit_id"] = payload.logged_in_unit_id.strip() if payload.logged_in_unit_id else None
+
     state.set_beat_overlays(BEAT_OVERLAYS)
-    state.set_patrol_simulation(enabled=True, profile="BEAT_10X5", tick_seconds=payload.tick_seconds)
+    state.set_patrol_simulation(
+        enabled=True,
+        profile="LIVE_DEV" if payload.live_mode else "BEAT_10X5",
+        tick_seconds=payload.tick_seconds,
+        metadata={
+            "min_call_interval_seconds": min_call_interval,
+            "max_call_interval_seconds": max_call_interval,
+            "max_active_calls": max_active_calls,
+            "min_call_duration_seconds": min_call_duration,
+            "max_call_duration_seconds": max_call_duration,
+            "logged_in_unit_id": PATROL_RUNTIME["excluded_unit_id"],
+        },
+    )
 
     assigned = 0
-    for idx in range(payload.initial_calls):
-        if _create_patrol_call(idx):
+    initial_calls = min(payload.initial_calls, max_active_calls)
+    for idx in range(initial_calls):
+        created = _create_patrol_call(
+            idx,
+            excluded_unit_id=PATROL_RUNTIME["excluded_unit_id"],
+            min_call_duration_seconds=min_call_duration,
+            max_call_duration_seconds=max_call_duration,
+        )
+        if created["assigned"]:
             assigned += 1
 
+    next_due_at = _schedule_next_call_due(min_call_interval, max_call_interval)
     status = state.patrol_simulation_status()
     return {
         "started": True,
-        "profile": "BEAT_10X5",
+        "profile": "LIVE_DEV" if payload.live_mode else "BEAT_10X5",
+        "live_mode": payload.live_mode,
         "tick_seconds": payload.tick_seconds,
         "dispatchable_units": status["dispatchable_units"],
         "senior_units": status["senior_units"],
         "beats_active": status["beats_active"],
-        "initial_calls": payload.initial_calls,
+        "initial_calls": initial_calls,
         "initial_assigned": assigned,
+        "max_active_calls": max_active_calls,
+        "next_call_due_at": next_due_at,
+        "logged_in_unit_id": PATROL_RUNTIME["excluded_unit_id"],
     }
 
 
 def stop_patrol_simulation() -> dict:
-    state.set_patrol_simulation(enabled=False, profile="OFF", tick_seconds=12)
+    PATROL_RUNTIME["incident_timers"] = {}
+    PATROL_RUNTIME["excluded_unit_id"] = None
+    state.set_patrol_simulation(
+        enabled=False,
+        profile="OFF",
+        tick_seconds=12,
+        metadata={
+            "min_call_interval_seconds": 30,
+            "max_call_interval_seconds": 120,
+            "max_active_calls": 10,
+            "min_call_duration_seconds": 60,
+            "max_call_duration_seconds": 600,
+            "logged_in_unit_id": None,
+        },
+    )
     return {"stopped": True, "profile": "OFF", "status": state.patrol_simulation_status()}
 
 
 def patrol_simulation_status() -> dict:
-    return state.patrol_simulation_status()
+    status = state.patrol_simulation_status()
+    status["timed_incidents"] = len(PATROL_RUNTIME["incident_timers"])
+    return status
 
 
 def _auto_close_incident(incident: dict) -> None:
@@ -721,6 +829,13 @@ def _auto_close_incident(incident: dict) -> None:
     )
 
 
+def _move_toward(current_lat: float, current_lon: float, target_lat: float, target_lon: float, ratio: float = 0.26) -> tuple[float, float]:
+    return (
+        current_lat + ((target_lat - current_lat) * ratio),
+        current_lon + ((target_lon - current_lon) * ratio),
+    )
+
+
 def advance_patrol_simulation() -> dict:
     status = state.patrol_simulation_status()
     if not status.get("enabled"):
@@ -734,10 +849,54 @@ def advance_patrol_simulation() -> dict:
             return {"advanced": False, "reason": "tick_interval", "next_in_seconds": int(tick_seconds - elapsed)}
 
     state.mark_patrol_tick()
-    tick_index = state.patrol_simulation_status().get("tick_index", 0)
+    status = state.patrol_simulation_status()
+    tick_index = status.get("tick_index", 0)
+    now = datetime.now(timezone.utc)
+    excluded_unit_id = str(status.get("logged_in_unit_id") or PATROL_RUNTIME.get("excluded_unit_id") or "")
+
+    incident_timers: dict = PATROL_RUNTIME["incident_timers"]
+    for incident_id, timer in list(incident_timers.items()):
+        incident = state.get_incident(incident_id)
+        if not incident or incident["status"] == "CLOSED":
+            incident_timers.pop(incident_id, None)
+            continue
+
+        unit_id = str(timer.get("unit_id") or incident.get("assigned_unit_id") or "")
+        if not unit_id:
+            incident_timers.pop(incident_id, None)
+            continue
+
+        target_lat = float(timer.get("target_lat") or incident["coordinates"]["lat"])
+        target_lon = float(timer.get("target_lon") or incident["coordinates"]["lon"])
+        unit = state.get_unit(unit_id)
+        if unit and incident["status"] in {"DISPATCHED", "EN_ROUTE"}:
+            moved_lat, moved_lon = _move_toward(
+                current_lat=float(unit.coordinates.lat),
+                current_lon=float(unit.coordinates.lon),
+                target_lat=target_lat,
+                target_lon=target_lon,
+            )
+            state.update_unit_coordinates(unit_id, moved_lat, moved_lon)
+
+        en_route_event_at = parse_utc(str(timer["en_route_event_at"]))
+        on_scene_at = parse_utc(str(timer["on_scene_at"]))
+        clear_at = parse_utc(str(timer["clear_at"]))
+
+        if incident["status"] == "DISPATCHED" and now >= en_route_event_at:
+            state.record_officer_action(incident_id, unit_id, "EN_ROUTE")
+        if incident["status"] in {"DISPATCHED", "EN_ROUTE"} and now >= on_scene_at:
+            state.record_officer_action(incident_id, unit_id, "ON_SCENE")
+            state.update_unit_coordinates(unit_id, target_lat, target_lon)
+        if incident["status"] == "ON_SCENE":
+            state.update_unit_coordinates(unit_id, target_lat, target_lon)
+            if now >= clear_at:
+                _auto_close_incident(incident)
+                incident_timers.pop(incident_id, None)
 
     for unit in state.list_units():
         if not unit.dispatchable or unit.status != "AVAILABLE" or unit.beat is None:
+            continue
+        if excluded_unit_id and unit.unit_id == excluded_unit_id:
             continue
         beat = _beat_by_id(unit.beat)
         lat_min, lat_max, lon_min, lon_max = _beat_bounds(unit.beat)
@@ -748,33 +907,35 @@ def advance_patrol_simulation() -> dict:
         lon = beat["center"]["lon"] + (cos((tick_index * 0.55) + unit_seed) * lon_radius)
         state.update_unit_coordinates(unit.unit_id, lat=lat, lon=lon)
 
-    active_incidents = state.list_incident_summaries(include_closed=False)
-    for summary in active_incidents:
-        incident = state.get_incident(summary.incident_id)
-        if not incident:
-            continue
-        unit_id = incident.get("assigned_unit_id")
-        if not unit_id:
-            continue
-        if incident["status"] == "DISPATCHED" and tick_index % 2 == 0:
-            state.record_officer_action(incident["incident_id"], unit_id, "EN_ROUTE")
-        elif incident["status"] == "EN_ROUTE" and tick_index % 3 == 0:
-            state.record_officer_action(incident["incident_id"], unit_id, "ON_SCENE")
-        elif incident["status"] == "ON_SCENE" and tick_index % 5 == 0:
-            _auto_close_incident(incident)
-
-    active_count = len(state.list_incident_summaries(include_closed=False))
+    min_call_interval = int(status.get("min_call_interval_seconds") or 30)
+    max_call_interval = int(status.get("max_call_interval_seconds") or 120)
+    min_call_duration = int(status.get("min_call_duration_seconds") or 60)
+    max_call_duration = int(status.get("max_call_duration_seconds") or 600)
+    max_active_calls = int(status.get("max_active_calls") or 10)
+    active_count = _active_incident_count()
     generated = 0
-    if active_count < 6 or tick_index % 2 == 1:
-        if _create_patrol_call(template_index=tick_index + active_count):
-            generated += 1
-        if active_count < 4 and tick_index % 3 == 0:
-            if _create_patrol_call(template_index=tick_index + active_count + 1):
-                generated += 1
+    next_call_due_at_raw = status.get("next_call_due_at")
+    if not next_call_due_at_raw:
+        next_call_due_at_raw = _schedule_next_call_due(min_call_interval, max_call_interval)
 
+    if active_count < max_active_calls and now >= parse_utc(str(next_call_due_at_raw)):
+        _create_patrol_call(
+            template_index=tick_index + active_count,
+            excluded_unit_id=excluded_unit_id or None,
+            min_call_duration_seconds=min_call_duration,
+            max_call_duration_seconds=max_call_duration,
+        )
+        generated = 1
+        _schedule_next_call_due(min_call_interval, max_call_interval)
+    elif active_count >= max_active_calls and now >= parse_utc(str(next_call_due_at_raw)):
+        _schedule_next_call_due(30, 60)
+
+    refreshed_status = state.patrol_simulation_status()
     return {
         "advanced": True,
         "tick_index": tick_index,
-        "active_incidents": len(state.list_incident_summaries(include_closed=False)),
+        "active_incidents": _active_incident_count(),
         "calls_generated_this_tick": generated,
+        "next_call_due_at": refreshed_status.get("next_call_due_at"),
+        "timed_incidents": len(PATROL_RUNTIME["incident_timers"]),
     }

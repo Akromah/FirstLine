@@ -502,3 +502,58 @@ def test_intake_dispatch_reporting_flow() -> None:
     code_detail_response = client.get("/api/v1/intel/code/PC-211")
     assert code_detail_response.status_code == 200
     assert code_detail_response.json()["title"] == "Robbery"
+
+    live_start_response = client.post(
+        "/api/v1/intake/patrol-sim/start",
+        json={
+            "clear_existing": True,
+            "live_mode": True,
+            "tick_seconds": 5,
+            "initial_calls": 2,
+            "logged_in_unit_id": "u-day-3",
+            "min_call_interval_seconds": 30,
+            "max_call_interval_seconds": 120,
+            "max_active_calls": 10,
+            "min_call_duration_seconds": 60,
+            "max_call_duration_seconds": 600,
+        },
+    )
+    assert live_start_response.status_code == 200
+    live_start_payload = live_start_response.json()
+    assert live_start_payload["profile"] == "LIVE_DEV"
+    assert live_start_payload["logged_in_unit_id"] == "u-day-3"
+    assert live_start_payload["max_active_calls"] == 10
+
+    live_status_response = client.get("/api/v1/intake/patrol-sim/status")
+    assert live_status_response.status_code == 200
+    live_status_payload = live_status_response.json()
+    assert live_status_payload["enabled"] is True
+    assert live_status_payload["profile"] == "LIVE_DEV"
+    assert live_status_payload["logged_in_unit_id"] == "u-day-3"
+
+    live_intake_response = client.post(
+        "/api/v1/intake/calls",
+        json={
+            "caller_name": "Live mode caller",
+            "phone": "555-7000",
+            "call_text": "Suspicious person peeking into parked cars.",
+            "address": "355 Pearl Ave, Redlands",
+            "lat": 34.0498,
+            "lon": -117.1707,
+        },
+    )
+    assert live_intake_response.status_code == 200
+    live_incident_id = live_intake_response.json()["call_id"]
+
+    excluded_assign_response = client.post(
+        "/api/v1/dispatch/assign",
+        json={
+            "incident_id": live_incident_id,
+            "required_skills": ["Crisis"],
+            "incident_lat": 34.0498,
+            "incident_lon": -117.1707,
+            "exclude_unit_ids": ["u-day-3"],
+        },
+    )
+    assert excluded_assign_response.status_code == 200
+    assert excluded_assign_response.json()["recommended_unit_id"] != "u-day-3"
