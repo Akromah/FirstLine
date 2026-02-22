@@ -136,6 +136,7 @@ export default function App() {
   const [units, setUnits] = useState<UnitSummary[]>([]);
   const [command, setCommand] = useState<any>(null);
   const [mapData, setMapData] = useState<any>(null);
+  const [mapReady, setMapReady] = useState(false);
   const [reportHub, setReportHub] = useState<ReportingHub | null>(null);
   const [reviewQueue, setReviewQueue] = useState<ReviewQueue | null>(null);
   const [incidentDetail, setIncidentDetail] = useState<IncidentDetail | null>(null);
@@ -294,6 +295,7 @@ export default function App() {
         attributionControl: false,
       });
       mapRef.current = map;
+      setMapReady(true);
     }).catch(() => {
       setBanner("Map library failed to load.");
     });
@@ -304,11 +306,12 @@ export default function App() {
       mapRef.current?.remove();
       mapRef.current = null;
       mapLibRef.current = null;
+      setMapReady(false);
     };
   }, []);
 
   useEffect(() => {
-    if (!mapRef.current || !mapData || !mapLibRef.current) return;
+    if (!mapReady || !mapRef.current || !mapData || !mapLibRef.current) return;
     markerRefs.current.forEach((m) => m.remove());
     markerRefs.current = [];
 
@@ -329,7 +332,7 @@ export default function App() {
     if (selectedIncident) {
       mapRef.current.flyTo({ center: [selectedIncident.coordinates.lon, selectedIncident.coordinates.lat], zoom: 13, speed: 0.6 });
     }
-  }, [mapData, selectedIncident]);
+  }, [mapData, selectedIncident, mapReady]);
 
   useEffect(() => {
     async function loadRisk() {
