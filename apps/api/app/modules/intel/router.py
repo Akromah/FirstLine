@@ -1,6 +1,10 @@
 from fastapi import APIRouter, HTTPException, Query
 
-from app.modules.intel.service import get_person_profile, lookup_public_safety_records
+from app.modules.intel.service import (
+    build_incident_intel_packet,
+    get_person_profile,
+    lookup_public_safety_records,
+)
 
 router = APIRouter()
 
@@ -16,3 +20,11 @@ def person_profile(person_id: str) -> dict:
     if not profile:
         raise HTTPException(status_code=404, detail="Person not found")
     return profile
+
+
+@router.get("/incident/{incident_id}")
+def incident_intel_packet(incident_id: str) -> dict:
+    packet = build_incident_intel_packet(incident_id)
+    if not packet:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return packet

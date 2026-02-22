@@ -64,6 +64,12 @@ type LookupResult = {
   firearms: Array<{ registration_id: string; owner_name: string; weapon_type: string; status: string }>;
   warrants: Array<{ warrant_id: string; subject_name: string; severity: string; status: string; reason: string }>;
 };
+type IncidentIntelPacket = {
+  incident_id: string;
+  queries: { address_query: string; caller_query?: string | null };
+  totals: { records: number; firearms: number; warrants: number; active_warrants: number };
+  threat_indicators: string[];
+};
 
 type PersonProfile = {
   person: { person_id: string; full_name: string; address: string };
@@ -314,6 +320,7 @@ export default function App() {
   const [intelQuery, setIntelQuery] = useState("Brandon");
   const [lookup, setLookup] = useState<LookupResult | null>(null);
   const [profile, setProfile] = useState<PersonProfile | null>(null);
+  const [incidentIntel, setIncidentIntel] = useState<IncidentIntelPacket | null>(null);
 
   const [aiPrompt, setAiPrompt] = useState("Provide next actions and final disposition.");
   const [aiAssist, setAiAssist] = useState<AIAssist | null>(null);
@@ -554,6 +561,7 @@ export default function App() {
     if (!selectedIncident) return;
     setReportNarrative(`Incident ${selectedIncident.incident_id}: ${selectedIncident.call_type} at ${selectedIncident.address}.`);
     setChannelIncidentId(selectedIncident.incident_id);
+    setIncidentIntel(null);
   }, [selectedIncident?.incident_id]);
 
   useEffect(() => {
@@ -1195,6 +1203,20 @@ export default function App() {
     await runIntelLookup(intelQuery);
   }
 
+  async function handleBuildIncidentIntel() {
+    if (!selectedIncident) return;
+    setLoading(true);
+    try {
+      const packet = await fetchJson<IncidentIntelPacket>(`/api/v1/intel/incident/${selectedIncident.incident_id}`);
+      setIncidentIntel(packet);
+      setBanner(`Incident intel packet built: ${packet.totals.records + packet.totals.firearms + packet.totals.warrants} total matches.`);
+    } catch (error) {
+      setBanner(`Incident intel packet failed: ${(error as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleQuickIntel(mode: "ADDRESS" | "CALLER" | "WARRANTS") {
     if (mode === "ADDRESS") {
       const query = selectedIncident?.address ?? intelQuery;
@@ -1773,6 +1795,7 @@ export default function App() {
               <button type="button" onClick={() => handleQuickIntel("CALLER")} disabled={loading}>Lookup Caller Name</button>
               <button type="button" onClick={() => handleQuickIntel("WARRANTS")} disabled={loading}>Lookup Warrants</button>
               <button type="button" onClick={() => { setIntelQuery("Brandon"); handleLookup(); }} disabled={loading}>Load Demo Person</button>
+              <button type="button" onClick={handleBuildIncidentIntel} disabled={loading || !selectedIncident}>Build Incident Intel Packet</button>
             </div>
             <div className="hub-grid">
               <div className="hub-col">
@@ -1795,6 +1818,17 @@ export default function App() {
               </div>
             </div>
             {profile ? <div className="profile-card"><strong>Profile - {profile.person.full_name} ({profile.person.person_id})</strong><p>Address: {profile.person.address}</p><p>Safety flags: {profile.officer_safety_flags.join(", ") || "None"}</p></div> : null}
+            {incidentIntel ? (
+              <div className="profile-card">
+                <strong>Incident Intel Packet - {incidentIntel.incident_id}</strong>
+                <p>Address query: {incidentIntel.queries.address_query || "n/a"}</p>
+                <p>Caller query: {incidentIntel.queries.caller_query || "n/a"}</p>
+                <p>
+                  Totals: records {incidentIntel.totals.records} · firearms {incidentIntel.totals.firearms} · warrants {incidentIntel.totals.warrants} · active warrants {incidentIntel.totals.active_warrants}
+                </p>
+                <p>Indicators: {incidentIntel.threat_indicators.join(" | ")}</p>
+              </div>
+            ) : null}
           </article>
           ) : null}
         </section>

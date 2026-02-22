@@ -50,6 +50,12 @@ def test_intake_dispatch_reporting_flow() -> None:
     assert len(intel_payload["records"]) >= 1
     assert len(intel_payload["warrants"]) >= 1
 
+    incident_intel_response = client.get(f"/api/v1/intel/incident/{incident_id}")
+    assert incident_intel_response.status_code == 200
+    incident_intel_payload = incident_intel_response.json()
+    assert "threat_indicators" in incident_intel_payload
+    assert incident_intel_payload["totals"]["records"] >= 1
+
     assign_response = client.post(
         "/api/v1/dispatch/assign",
         json={
