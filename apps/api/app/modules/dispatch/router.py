@@ -7,6 +7,7 @@ from app.modules.dispatch.service import (
     AssignmentResponse,
     DispositionRequest,
     DispositionResponse,
+    build_priority_radar,
     build_unit_readiness_board,
     choose_unit,
     finalize_disposition,
@@ -30,6 +31,11 @@ def list_dispatch_queue() -> dict:
 @router.get("/unit-board")
 def unit_readiness_board() -> dict:
     return build_unit_readiness_board()
+
+
+@router.get("/priority-board")
+def priority_radar(limit: int = 8) -> dict:
+    return build_priority_radar(limit=limit)
 
 
 @router.get("/incident/{incident_id}")

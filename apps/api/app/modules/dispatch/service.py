@@ -192,3 +192,28 @@ def build_unit_readiness_board() -> dict:
         "units": board,
         "break_recommendations": [row["unit_id"] for row in board if row["requires_break"]],
     }
+
+
+def build_priority_radar(limit: int = 8) -> dict:
+    incidents = state.list_incident_summaries()
+    rows: list[dict] = []
+    for incident in incidents:
+        risk = state.build_risk_profile(incident.incident_id) or {}
+        rows.append(
+            {
+                "incident_id": incident.incident_id,
+                "call_type": incident.call_type,
+                "priority": incident.priority,
+                "status": incident.status,
+                "address": incident.address,
+                "risk_score": risk.get("risk_score", incident.priority),
+                "safety_alerts": risk.get("safety_alerts", []),
+            }
+        )
+    rows.sort(key=lambda item: (item["risk_score"], item["priority"]), reverse=True)
+    capped = rows[: max(1, min(limit, 25))]
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "count": len(capped),
+        "incidents": capped,
+    }

@@ -16,6 +16,10 @@ type UnitReadiness = {
   requires_break: boolean;
 };
 type UnitBoard = { units: UnitReadiness[]; break_recommendations: string[] };
+type PriorityRadar = {
+  count: number;
+  incidents: Array<{ incident_id: string; call_type: string; priority: number; status: string; address: string; risk_score: number; safety_alerts: string[] }>;
+};
 type ReportDraft = {
   report_id: string;
   incident_id: string;
@@ -173,6 +177,7 @@ export default function App() {
   const [command, setCommand] = useState<any>(null);
   const [commandTrends, setCommandTrends] = useState<CommandTrends | null>(null);
   const [unitBoard, setUnitBoard] = useState<UnitBoard | null>(null);
+  const [priorityBoard, setPriorityBoard] = useState<PriorityRadar | null>(null);
   const [mapData, setMapData] = useState<any>(null);
   const [mapReady, setMapReady] = useState(false);
   const [reportHub, setReportHub] = useState<ReportingHub | null>(null);
@@ -317,10 +322,11 @@ export default function App() {
       const channelPromise = selectedIncidentIdRef.current
         ? fetchJson<IncidentChannel>(`/api/v1/officer/channel/${selectedIncidentIdRef.current}?limit=10`).catch(() => null)
         : Promise.resolve(null);
-      const [q, u, ub, c, ct, m, h, rq, inbox, feed, channel] = await Promise.all([
+      const [q, u, ub, pb, c, ct, m, h, rq, inbox, feed, channel] = await Promise.all([
         fetchJson<{ incidents: IncidentSummary[] }>("/api/v1/dispatch/queue"),
         fetchJson<{ units: UnitSummary[] }>("/api/v1/dispatch/units"),
         fetchJson<UnitBoard>("/api/v1/dispatch/unit-board"),
+        fetchJson<PriorityRadar>("/api/v1/dispatch/priority-board?limit=6"),
         fetchJson<any>("/api/v1/command/overview"),
         fetchJson<CommandTrends>("/api/v1/command/trends?periods=6"),
         fetchJson<any>("/api/v1/map/overview"),
@@ -333,6 +339,7 @@ export default function App() {
       setQueue(q.incidents);
       setUnits(u.units);
       setUnitBoard(ub);
+      setPriorityBoard(pb);
       setCommand(c);
       setCommandTrends(ct);
       setMapData(m);
@@ -1053,6 +1060,7 @@ export default function App() {
         <span className="chip">Report drafts: {reportHub?.drafts.length ?? 0}</span>
         <span className="chip">Supervisor review: {reviewQueue?.review_count ?? 0}</span>
         <span className="chip">Break flags: {unitBoard?.break_recommendations.length ?? 0}</span>
+        <span className="chip">Priority radar: {priorityBoard?.incidents.filter((item) => item.risk_score >= 80).length ?? 0} high risk</span>
       </div>
 
       <main className="layout">
@@ -1118,6 +1126,25 @@ export default function App() {
               <button key={incident.incident_id} type="button" className="list-row" onClick={() => setSelectedIncidentId(incident.incident_id)}>
                 <div><strong>{incident.incident_id} - {incident.call_type}</strong><p>{incident.address}</p></div>
                 <div className="queue-meta"><span className="badge">P{incident.priority}</span><span className="badge soft">{incident.status}</span></div>
+              </button>
+            ))}
+          </article>
+          ) : null}
+          {(showDispatch || showField) ? (
+          <article className="card panel">
+            <h2>Priority Radar</h2>
+            <p className="section-subtitle">Top risk-ranked incidents with safety context.</p>
+            {(priorityBoard?.incidents ?? []).map((item) => (
+              <button key={item.incident_id} type="button" className="list-row" onClick={() => setSelectedIncidentId(item.incident_id)}>
+                <div>
+                  <strong>{item.incident_id} · {item.call_type}</strong>
+                  <p>{item.address}</p>
+                  <p>{item.safety_alerts.join(" | ") || "No immediate safety flags."}</p>
+                </div>
+                <div className="queue-meta">
+                  <span className="badge">R{item.risk_score}</span>
+                  <span className="badge soft">{item.status}</span>
+                </div>
               </button>
             ))}
           </article>

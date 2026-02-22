@@ -35,6 +35,10 @@ def test_intake_dispatch_reporting_flow() -> None:
     assert unit_board_response.status_code == 200
     assert len(unit_board_response.json()["units"]) >= 1
 
+    priority_board_response = client.get("/api/v1/dispatch/priority-board", params={"limit": 5})
+    assert priority_board_response.status_code == 200
+    assert priority_board_response.json()["count"] >= 1
+
     risk_response = client.get(f"/api/v1/intake/risk/{incident_id}")
     assert risk_response.status_code == 200
     risk_payload = risk_response.json()
