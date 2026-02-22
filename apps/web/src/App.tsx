@@ -1383,6 +1383,11 @@ export default function App() {
   const showField = viewMode === "Field";
   const showReport = viewMode === "Report";
   const showIntel = viewMode === "Intel";
+  const selectedAssignedUnit = useMemo(() => {
+    const unitId = incidentDetail?.incident?.assigned_unit_id;
+    if (!unitId) return null;
+    return units.find((unit) => unit.unit_id === unitId) ?? null;
+  }, [incidentDetail?.incident?.assigned_unit_id, units]);
   const moduleCounts: Partial<Record<ModulePanel, number>> = {
     queue: filteredQueue.length,
     priorityRadar: priorityBoard?.incidents.filter((item) => item.risk_score >= 80).length,
@@ -1615,7 +1620,32 @@ export default function App() {
                 Center Selected
               </button>
             </div>
-            <div className="map-canvas"><div className="maplibre-map" ref={mapContainerRef} /></div>
+            <div className="map-canvas">
+              <div className="maplibre-map" ref={mapContainerRef} />
+              {selectedIncident ? (
+                <div className="map-hud">
+                  <div className="map-hud-head">
+                    <strong>{selectedIncident.incident_id}</strong>
+                    <span className={`badge soft ${reportReadiness?.ready_for_submission ? "ok" : ""}`}>
+                      {reportReadiness?.ready_for_submission ? "RMS READY" : "RMS BLOCKED"}
+                    </span>
+                  </div>
+                  <p>{selectedIncident.call_type} · P{selectedIncident.priority} · {selectedIncident.status}</p>
+                  <p>{selectedIncident.address}</p>
+                  <p>
+                    Risk {riskProfile?.risk_score ?? selectedIncident.priority}
+                    {selectedAssignedUnit ? ` · Unit ${selectedAssignedUnit.callsign}` : ""}
+                    {incidentDetail?.elapsed_minutes ? ` · Elapsed ${incidentDetail.elapsed_minutes}m` : ""}
+                  </p>
+                  <div className="map-hud-actions">
+                    <button type="button" onClick={() => handleRecommend()} disabled={loading}>Recommend</button>
+                    <button type="button" onClick={() => handleAssign()} disabled={loading}>Dispatch</button>
+                    <button type="button" onClick={() => handleQuickCode("ON_SCENE")} disabled={loading}>On Scene</button>
+                    <button type="button" onClick={() => setActiveModule("disposition")} disabled={loading}>Disposition</button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
           </article>
 
           {activeModule === "queue" ? (

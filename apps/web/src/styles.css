@@ -426,6 +426,51 @@ body {
   background: #edf3fb;
 }
 
+.map-hud {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  width: min(360px, calc(100% - 20px));
+  border: 1px solid #355983;
+  border-radius: 12px;
+  background: rgba(10, 21, 37, 0.9);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(4px);
+  padding: 10px;
+  z-index: 10;
+}
+
+.map-hud-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.map-hud p {
+  margin: 6px 0 0;
+  color: #c6d8f6;
+  font-size: 12px;
+}
+
+.map-hud-actions {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.map-hud-actions button {
+  border: 1px solid #3f6595;
+  border-radius: 9px;
+  background: linear-gradient(180deg, #1e395f 0%, #152c4a 100%);
+  color: #e8f1ff;
+  min-height: 34px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 .map-card.map-focus-mode .map-canvas {
   min-height: calc(100vh - 180px);
   height: calc(100vh - 180px);
@@ -1009,6 +1054,16 @@ body {
     height: 340px;
   }
 
+  .map-hud {
+    position: static;
+    width: 100%;
+    margin-bottom: 8px;
+  }
+
+  .map-hud-actions {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .maplibre-map {
     height: 100%;
   }
@@ -1217,6 +1272,12 @@ body {
   background: rgba(79, 141, 255, 0.18);
   color: #d9e7ff;
   border: 1px solid #3e6295;
+}
+
+.badge.soft.ok {
+  border-color: #2fbc67;
+  color: #dff9eb;
+  background: rgba(47, 188, 103, 0.16);
 }
 
 .login-shell {
