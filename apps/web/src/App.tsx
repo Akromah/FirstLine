@@ -1408,7 +1408,7 @@ export default function App() {
       <main className={`layout ${rightColumnActive ? "" : "map-focus"}`.trim()}>
         <section className="main-column">
           {activeModule === "intake" ? (
-          <article className="card panel">
+          <article className="card panel module-overlay">
             <h2>Smart Call Intake</h2>
             <p className="section-subtitle">Structured intake with geolocation and AI-ready notes.</p>
             <form className="dispatch-form-grid" onSubmit={handleCreateCall}>
@@ -1463,7 +1463,7 @@ export default function App() {
           </article>
 
           {activeModule === "queue" ? (
-          <article className="card panel">
+          <article className="card panel module-overlay">
             <h2>Active Queue</h2>
             <div className="dispatch-form-grid">
               <label className="form-field">Status Filter<select value={queueStatusFilter} onChange={(e) => setQueueStatusFilter(e.target.value)}><option value="ALL">ALL</option><option value="NEW">NEW</option><option value="DISPATCHED">DISPATCHED</option><option value="EN_ROUTE">EN_ROUTE</option><option value="ON_SCENE">ON_SCENE</option><option value="TRANSPORT">TRANSPORT</option><option value="CLOSED">CLOSED</option></select></label>
@@ -1479,7 +1479,7 @@ export default function App() {
           </article>
           ) : null}
           {activeModule === "priorityRadar" ? (
-          <article className="card panel">
+          <article className="card panel module-overlay">
             <h2>Priority Radar</h2>
             <p className="section-subtitle">Top risk-ranked incidents with safety context.</p>
             {(priorityBoard?.incidents ?? []).map((item) => (
@@ -1498,7 +1498,7 @@ export default function App() {
           </article>
           ) : null}
           {activeModule === "fieldOps" ? (
-          <article className="card panel">
+          <article className="card panel module-overlay">
             <h2>Field Operations</h2>
             <p className="section-subtitle">
               {selectedIncident?.incident_id ?? "No incident"} · Elapsed {incidentDetail?.elapsed_minutes ?? 0}m
@@ -1529,7 +1529,7 @@ export default function App() {
           </article>
           ) : null}
           {activeModule === "assignedDeck" ? (
-          <article className="card panel">
+          <article className="card panel module-overlay">
             <h2>Assigned Call Deck</h2>
             <p className="section-subtitle">Keyboard shortcuts: A Accept · E En Route · O On Scene · C Clear</p>
             {(officerFeed?.assigned_incidents ?? []).length === 0 ? <div className="dispatch-banner">No active assignments for {statusUnitId}.</div> : null}
@@ -1549,7 +1549,7 @@ export default function App() {
           </article>
           ) : null}
           {activeModule === "reportHub" ? (
-          <article className="card panel">
+          <article className="card panel module-overlay">
             <h2>Report Writing Hub</h2>
             <p className="section-subtitle">Incident: <strong>{selectedIncident?.incident_id ?? "None selected"}</strong></p>
             {reportReadiness ? (
@@ -1672,7 +1672,7 @@ export default function App() {
           ) : null}
 
           {activeModule === "intelHub" ? (
-          <article className="card panel">
+          <article className="card panel module-overlay">
             <h2>Records and Warrants Hub</h2>
             <div className="search-row">
               <input value={intelQuery} onChange={(e) => setIntelQuery(e.target.value)} />

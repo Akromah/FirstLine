@@ -330,6 +330,21 @@ body {
   align-content: start;
 }
 
+.main-column {
+  position: relative;
+}
+
+.module-overlay {
+  position: fixed;
+  top: 172px;
+  right: 20px;
+  width: min(440px, calc(100vw - 40px));
+  max-height: calc(100vh - 245px);
+  overflow: auto;
+  z-index: 1350;
+  backdrop-filter: blur(3px);
+}
+
 .list-row {
   width: 100%;
   border: 1px solid #e1e9f6;
@@ -1001,6 +1016,13 @@ body {
 
   .dispatch-form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .module-overlay {
+    position: static;
+    width: 100%;
+    max-height: none;
+    overflow: visible;
   }
 
   .form-actions {
