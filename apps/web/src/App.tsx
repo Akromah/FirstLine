@@ -129,6 +129,7 @@ type ViewMode = "Dispatch" | "Field" | "Report" | "Intel";
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
 const MAP_STYLE_URL =
   import.meta.env.VITE_MAP_STYLE_URL ?? "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
+const PREFS_KEY = "firstline_ui_prefs_v1";
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -258,6 +259,40 @@ export default function App() {
   const statusUnitIdRef = useRef(statusUnitId);
   const dictationRef = useRef<any>(null);
   const dictationStartRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(PREFS_KEY);
+      if (!raw) return;
+      const prefs = JSON.parse(raw) as Record<string, unknown>;
+      if (typeof prefs.sessionRole === "string") setSessionRole(prefs.sessionRole);
+      if (typeof prefs.viewMode === "string") setViewMode(prefs.viewMode as ViewMode);
+      if (typeof prefs.statusUnitId === "string") setStatusUnitId(prefs.statusUnitId);
+      if (typeof prefs.showMapUnits === "boolean") setShowMapUnits(prefs.showMapUnits);
+      if (typeof prefs.showMapIncidents === "boolean") setShowMapIncidents(prefs.showMapIncidents);
+      if (typeof prefs.autoSaveEnabled === "boolean") setAutoSaveEnabled(prefs.autoSaveEnabled);
+    } catch {
+      // Ignore malformed local preference payloads.
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        PREFS_KEY,
+        JSON.stringify({
+          sessionRole,
+          viewMode,
+          statusUnitId,
+          showMapUnits,
+          showMapIncidents,
+          autoSaveEnabled,
+        })
+      );
+    } catch {
+      // Ignore storage write failures.
+    }
+  }, [sessionRole, viewMode, statusUnitId, showMapUnits, showMapIncidents, autoSaveEnabled]);
 
   useEffect(() => {
     selectedIncidentIdRef.current = selectedIncidentId;
