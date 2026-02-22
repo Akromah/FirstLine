@@ -198,6 +198,10 @@ def test_intake_dispatch_reporting_flow() -> None:
     assert review_queue_after_approval.status_code == 200
     assert all(item["report_id"] != report_id for item in review_queue_after_approval.json()["reports"])
 
+    reporting_metrics_response = client.get("/api/v1/reporting/metrics")
+    assert reporting_metrics_response.status_code == 200
+    assert reporting_metrics_response.json()["total_reports"] >= 1
+
     reporting_response = client.post(
         "/api/v1/reporting/rms",
         json={

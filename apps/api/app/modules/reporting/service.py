@@ -300,5 +300,35 @@ def get_supervisor_review_queue() -> dict:
     }
 
 
+def get_reporting_metrics() -> dict:
+    drafts = state.list_report_drafts()
+    if not drafts:
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "total_reports": 0,
+            "submitted_reports": 0,
+            "ready_for_command": 0,
+            "changes_requested": 0,
+            "avg_narrative_length": 0,
+            "evidence_attachment_rate": 0.0,
+        }
+
+    submitted = [draft for draft in drafts if draft.get("status") in {"SUBMITTED", "READY_FOR_COMMAND"}]
+    ready_for_command = [draft for draft in drafts if draft.get("status") == "READY_FOR_COMMAND"]
+    changes_requested = [draft for draft in drafts if draft.get("review_status") == "CHANGES_REQUESTED"]
+    narrative_lengths = [len((draft.get("narrative") or "").strip()) for draft in drafts]
+    with_evidence = [draft for draft in drafts if draft.get("evidence_links")]
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "total_reports": len(drafts),
+        "submitted_reports": len(submitted),
+        "ready_for_command": len(ready_for_command),
+        "changes_requested": len(changes_requested),
+        "avg_narrative_length": int(sum(narrative_lengths) / max(1, len(narrative_lengths))),
+        "evidence_attachment_rate": round(len(with_evidence) / max(1, len(drafts)), 2),
+    }
+
+
 def get_report_draft(report_id: str) -> dict | None:
     return state.get_report_draft(report_id)

@@ -11,6 +11,7 @@ from app.modules.reporting.service import (
     build_rms_payload,
     get_report_draft,
     get_reporting_hub,
+    get_reporting_metrics,
     get_report_templates,
     get_supervisor_review_queue,
     review_report,
@@ -33,6 +34,11 @@ def reporting_hub() -> dict:
 @router.get("/review-queue")
 def supervisor_review_queue() -> dict:
     return get_supervisor_review_queue()
+
+
+@router.get("/metrics")
+def reporting_metrics() -> dict:
+    return get_reporting_metrics()
 
 
 @router.post("/draft")

@@ -30,6 +30,14 @@ type ReportDraft = {
   evidence_links?: Array<{ type: string; uri: string; added_at?: string }>;
 };
 type ReportingHub = { drafts: ReportDraft[]; missing_reports: Array<{ incident_id: string; call_type: string; priority: number }> };
+type ReportingMetrics = {
+  total_reports: number;
+  submitted_reports: number;
+  ready_for_command: number;
+  changes_requested: number;
+  avg_narrative_length: number;
+  evidence_attachment_rate: number;
+};
 type ReviewQueue = {
   review_count: number;
   reports: Array<{ report_id: string; incident_id: string; unit_id: string; status: string; review_status?: string; review_notes?: string | null; updated_at: string; reasons: string[] }>;
@@ -182,6 +190,7 @@ export default function App() {
   const [mapData, setMapData] = useState<any>(null);
   const [mapReady, setMapReady] = useState(false);
   const [reportHub, setReportHub] = useState<ReportingHub | null>(null);
+  const [reportingMetrics, setReportingMetrics] = useState<ReportingMetrics | null>(null);
   const [reviewQueue, setReviewQueue] = useState<ReviewQueue | null>(null);
   const [incidentDetail, setIncidentDetail] = useState<IncidentDetail | null>(null);
 
@@ -357,7 +366,7 @@ export default function App() {
       const channelPromise = selectedIncidentIdRef.current
         ? fetchJson<IncidentChannel>(`/api/v1/officer/channel/${selectedIncidentIdRef.current}?limit=10`).catch(() => null)
         : Promise.resolve(null);
-      const [q, u, ub, pb, c, ct, m, h, rq, inbox, feed, channel] = await Promise.all([
+      const [q, u, ub, pb, c, ct, m, h, rm, rq, inbox, feed, channel] = await Promise.all([
         fetchJson<{ incidents: IncidentSummary[] }>("/api/v1/dispatch/queue"),
         fetchJson<{ units: UnitSummary[] }>("/api/v1/dispatch/units"),
         fetchJson<UnitBoard>("/api/v1/dispatch/unit-board"),
@@ -366,6 +375,7 @@ export default function App() {
         fetchJson<CommandTrends>("/api/v1/command/trends?periods=6"),
         fetchJson<any>("/api/v1/map/overview"),
         fetchJson<ReportingHub>("/api/v1/reporting/hub"),
+        fetchJson<ReportingMetrics>("/api/v1/reporting/metrics"),
         fetchJson<ReviewQueue>("/api/v1/reporting/review-queue"),
         inboxPromise,
         feedPromise,
@@ -379,6 +389,7 @@ export default function App() {
       setCommandTrends(ct);
       setMapData(m);
       setReportHub(h);
+      setReportingMetrics(rm);
       setReviewQueue(rq);
       setMessageInbox(inbox);
       setOfficerFeed(feed);
@@ -1436,6 +1447,20 @@ export default function App() {
               </div>
             ))}
             {(reviewQueue?.reports ?? []).length === 0 ? <div className="dispatch-banner">No reports currently require supervisor intervention.</div> : null}
+          </article>
+          ) : null}
+          {(showDispatch || showReport) ? (
+          <article className="card panel">
+            <h2>Reporting Pipeline Metrics</h2>
+            <div className="kpi-grid">
+              <div className="kpi"><span>Total Reports</span><strong>{reportingMetrics?.total_reports ?? 0}</strong></div>
+              <div className="kpi"><span>Submitted</span><strong>{reportingMetrics?.submitted_reports ?? 0}</strong></div>
+              <div className="kpi"><span>Ready For Command</span><strong>{reportingMetrics?.ready_for_command ?? 0}</strong></div>
+              <div className="kpi"><span>Changes Requested</span><strong>{reportingMetrics?.changes_requested ?? 0}</strong></div>
+            </div>
+            <div className="dispatch-banner">
+              Avg narrative length {reportingMetrics?.avg_narrative_length ?? 0} chars · Evidence rate {Math.round((reportingMetrics?.evidence_attachment_rate ?? 0) * 100)}%
+            </div>
           </article>
           ) : null}
 
