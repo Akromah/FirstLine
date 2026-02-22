@@ -189,6 +189,8 @@ export default function App() {
   const [recommendation, setRecommendation] = useState<any>(null);
   const [assignment, setAssignment] = useState<any>(null);
   const [riskProfile, setRiskProfile] = useState<any>(null);
+  const [showMapUnits, setShowMapUnits] = useState(true);
+  const [showMapIncidents, setShowMapIncidents] = useState(true);
 
   const [statusUnitId, setStatusUnitId] = useState("u-201");
   const [statusValue, setStatusValue] = useState("AVAILABLE");
@@ -384,24 +386,28 @@ export default function App() {
     markerRefs.current.forEach((m) => m.remove());
     markerRefs.current = [];
 
-    mapData.units.forEach((unit: UnitSummary) => {
-      const el = document.createElement("div");
-      el.className = `map-unit-marker status-${unit.status.toLowerCase().replace("_", "-")}`;
-      el.innerText = `${unit.callsign}\n${unit.status}`;
-      markerRefs.current.push(new mapLibRef.current.Marker({ element: el }).setLngLat([unit.coordinates.lon, unit.coordinates.lat]).addTo(mapRef.current!));
-    });
+    if (showMapUnits) {
+      mapData.units.forEach((unit: UnitSummary) => {
+        const el = document.createElement("div");
+        el.className = `map-unit-marker status-${unit.status.toLowerCase().replace("_", "-")}`;
+        el.innerText = `${unit.callsign}\n${unit.status}`;
+        markerRefs.current.push(new mapLibRef.current.Marker({ element: el }).setLngLat([unit.coordinates.lon, unit.coordinates.lat]).addTo(mapRef.current!));
+      });
+    }
 
-    mapData.active_incidents.forEach((incident: IncidentSummary) => {
-      const el = document.createElement("div");
-      el.className = "map-incident-marker";
-      el.innerText = `P${incident.priority}`;
-      markerRefs.current.push(new mapLibRef.current.Marker({ element: el }).setLngLat([incident.coordinates.lon, incident.coordinates.lat]).addTo(mapRef.current!));
-    });
+    if (showMapIncidents) {
+      mapData.active_incidents.forEach((incident: IncidentSummary) => {
+        const el = document.createElement("div");
+        el.className = "map-incident-marker";
+        el.innerText = `P${incident.priority}`;
+        markerRefs.current.push(new mapLibRef.current.Marker({ element: el }).setLngLat([incident.coordinates.lon, incident.coordinates.lat]).addTo(mapRef.current!));
+      });
+    }
 
     if (selectedIncident) {
       mapRef.current.flyTo({ center: [selectedIncident.coordinates.lon, selectedIncident.coordinates.lat], zoom: 13, speed: 0.6 });
     }
-  }, [mapData, selectedIncident, mapReady]);
+  }, [mapData, selectedIncident, mapReady, showMapUnits, showMapIncidents]);
 
   useEffect(() => {
     async function loadRisk() {
@@ -1046,6 +1052,20 @@ export default function App() {
           {(showDispatch || showField) ? (
           <article className="card map-card">
             <div className="map-header"><h2>Unified Live Map</h2><p>Live unit status and incident priority overlays.</p></div>
+            <div className="toggle-row">
+              <label><input type="checkbox" checked={showMapUnits} onChange={(e) => setShowMapUnits(e.target.checked)} /> Units</label>
+              <label><input type="checkbox" checked={showMapIncidents} onChange={(e) => setShowMapIncidents(e.target.checked)} /> Incidents</label>
+              <button
+                type="button"
+                className="dispatch-secondary"
+                onClick={() => {
+                  if (!selectedIncident || !mapRef.current) return;
+                  mapRef.current.flyTo({ center: [selectedIncident.coordinates.lon, selectedIncident.coordinates.lat], zoom: 13, speed: 0.6 });
+                }}
+              >
+                Center Selected
+              </button>
+            </div>
             <div className="map-canvas"><div className="maplibre-map" ref={mapContainerRef} /></div>
           </article>
           ) : null}
