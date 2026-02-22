@@ -53,3 +53,45 @@ def report_assist(payload: ReportAssistRequest) -> dict | None:
         ],
         "confidence": round(min(0.96, 0.68 + (incident["priority"] / 320)), 2),
     }
+
+
+class BriefingRequest(BaseModel):
+    incident_id: str
+    unit_id: str | None = None
+
+
+def incident_briefing(payload: BriefingRequest) -> dict | None:
+    incident = state.get_incident(payload.incident_id)
+    if not incident:
+        return None
+
+    risk = state.build_risk_profile(payload.incident_id) or {}
+    text = incident["call_text"].lower()
+    hazards: list[str] = []
+    if "weapon" in text or "gun" in text or "knife" in text:
+        hazards.append("Potential weapon involvement.")
+    if risk.get("mental_health_pattern_flag"):
+        hazards.append("Behavioral health escalation risk.")
+    if incident["priority"] >= 85:
+        hazards.append("High-priority response profile.")
+    if not hazards:
+        hazards.append("No elevated hazard markers detected in intake text.")
+
+    checklist = [
+        "Confirm approach route and cover options.",
+        "Run warrants and firearms checks on involved names.",
+        "Coordinate radio updates at key status changes.",
+        "Document evidence and witness details before clearing.",
+    ]
+
+    return {
+        "incident_id": payload.incident_id,
+        "unit_id": payload.unit_id,
+        "risk_score": risk.get("risk_score", incident["priority"]),
+        "hazards": hazards,
+        "checklist": checklist,
+        "briefing": (
+            f"Incident {incident['incident_id']} {incident['call_type']} at {incident['address']} "
+            f"priority {incident['priority']} status {incident['status']}."
+        ),
+    }

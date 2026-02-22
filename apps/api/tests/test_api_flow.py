@@ -115,6 +115,16 @@ def test_intake_dispatch_reporting_flow() -> None:
     assert ai_payload["recommended_disposition_code"]
     assert len(ai_payload["next_actions"]) >= 1
 
+    briefing_response = client.post(
+        "/api/v1/ai/briefing",
+        json={
+            "incident_id": incident_id,
+            "unit_id": assignment_payload["recommended_unit_id"],
+        },
+    )
+    assert briefing_response.status_code == 200
+    assert briefing_response.json()["risk_score"] >= 1
+
     command_response = client.get("/api/v1/command/overview")
     assert command_response.status_code == 200
     command_payload = command_response.json()

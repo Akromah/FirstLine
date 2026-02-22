@@ -63,6 +63,12 @@ type AIAssist = {
   officer_safety_alerts: string[];
   confidence: number;
 };
+type AIBriefing = {
+  briefing: string;
+  risk_score: number;
+  hazards: string[];
+  checklist: string[];
+};
 type ReportTemplate = {
   template_id: string;
   label: string;
@@ -259,6 +265,7 @@ export default function App() {
 
   const [aiPrompt, setAiPrompt] = useState("Provide next actions and final disposition.");
   const [aiAssist, setAiAssist] = useState<AIAssist | null>(null);
+  const [safetyBriefing, setSafetyBriefing] = useState<AIBriefing | null>(null);
 
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
@@ -1126,6 +1133,23 @@ export default function App() {
     }
   }
 
+  async function handleSafetyBriefing() {
+    if (!selectedIncident) return;
+    setLoading(true);
+    try {
+      const result = await fetchJson<AIBriefing>("/api/v1/ai/briefing", {
+        method: "POST",
+        body: JSON.stringify({ incident_id: selectedIncident.incident_id, unit_id: statusUnitId }),
+      });
+      setSafetyBriefing(result);
+      setBanner(`Safety briefing generated for ${selectedIncident.incident_id}.`);
+    } catch (error) {
+      setBanner(`Safety briefing failed: ${(error as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleQuickCode(action: "EN_ROUTE" | "ON_SCENE" | "CLEAR") {
     await handleOfficerAction(action);
     if (action === "EN_ROUTE") setStatusValue("EN_ROUTE");
@@ -1276,13 +1300,17 @@ export default function App() {
             <p className="section-subtitle">
               {selectedIncident?.incident_id ?? "No incident"} · Elapsed {incidentDetail?.elapsed_minutes ?? 0}m
             </p>
-            <div className="dev-actions"><button type="button" onClick={handleExportIncidentPacket} disabled={!selectedIncident}>Export Incident Packet</button></div>
+            <div className="button-grid">
+              <button type="button" onClick={handleSafetyBriefing} disabled={loading || !selectedIncident}>Generate Safety Briefing</button>
+              <button type="button" onClick={handleExportIncidentPacket} disabled={!selectedIncident}>Export Incident Packet</button>
+            </div>
             <div className="dispatch-banner">
               Latest action:{" "}
               {incidentDetail?.latest_action?.action ??
                 incidentDetail?.latest_action?.event ??
                 "No action recorded"}
             </div>
+            {safetyBriefing ? <div className="ai-box"><p>{safetyBriefing.briefing}</p><p>Risk score: {safetyBriefing.risk_score}</p><p>Hazards: {safetyBriefing.hazards.join(" | ")}</p><p>Checklist: {safetyBriefing.checklist.join(" | ")}</p></div> : null}
             <div className="timeline-list">
               {recentTimeline.map((event, index) => (
                 <div key={`${event.time}-${index}`} className="timeline-item">
