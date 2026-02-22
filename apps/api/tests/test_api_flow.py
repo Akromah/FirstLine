@@ -128,6 +128,22 @@ def test_intake_dispatch_reporting_flow() -> None:
     assert channel_response.status_code == 200
     assert channel_response.json()["message_count"] >= 1
 
+    handoff_post_response = client.post(
+        "/api/v1/officer/handoff",
+        json={
+            "incident_id": incident_id,
+            "unit_id": assignment_payload["recommended_unit_id"],
+            "note": "Scene secure. Witness in apartment 3B. Request day-shift follow-up.",
+            "audience": "SUPERVISOR",
+        },
+    )
+    assert handoff_post_response.status_code == 200
+    assert handoff_post_response.json()["ok"] is True
+
+    handoff_get_response = client.get(f"/api/v1/officer/handoff/{incident_id}")
+    assert handoff_get_response.status_code == 200
+    assert handoff_get_response.json()["note_count"] >= 1
+
     ai_response = client.post(
         "/api/v1/ai/incident",
         json={

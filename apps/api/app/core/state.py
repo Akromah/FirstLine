@@ -62,6 +62,7 @@ class InMemoryState:
 
         self._incidents: dict[str, dict] = {}
         self._messages: list[dict] = []
+        self._handoff_notes: dict[str, list[dict]] = {}
         self._report_drafts: dict[str, dict] = {}
         self._command_history: list[dict] = []
         self._person_records: list[dict] = []
@@ -727,6 +728,49 @@ class InMemoryState:
             ]
             scoped.sort(key=lambda row: row["sent_at"], reverse=True)
             return scoped[: max(1, min(limit, 200))]
+
+    def add_handoff_note(
+        self,
+        incident_id: str,
+        unit_id: str,
+        note: str,
+        audience: str = "ALL",
+    ) -> dict | None:
+        with self._lock:
+            incident = self._incidents.get(incident_id)
+            if not incident:
+                return None
+            if len(note.strip()) < 6:
+                return None
+
+            now = utc_now_iso()
+            existing = self._handoff_notes.setdefault(incident_id, [])
+            entry = {
+                "note_id": f"handoff-{len(existing) + 1:03d}",
+                "incident_id": incident_id,
+                "unit_id": unit_id,
+                "audience": audience.strip().upper() or "ALL",
+                "note": note.strip(),
+                "created_at": now,
+            }
+            existing.append(entry)
+            incident["timeline"].append(
+                {
+                    "event": "handoff_note_added",
+                    "time": now,
+                    "unit_id": unit_id,
+                    "summary": note.strip(),
+                }
+            )
+            return entry.copy()
+
+    def list_handoff_notes(self, incident_id: str, limit: int = 20) -> list[dict] | None:
+        with self._lock:
+            if incident_id not in self._incidents:
+                return None
+            notes = [item.copy() for item in self._handoff_notes.get(incident_id, [])]
+            notes.sort(key=lambda row: row["created_at"], reverse=True)
+            return notes[: max(1, min(limit, 100))]
 
     def build_command_snapshot(self) -> dict:
         with self._lock:

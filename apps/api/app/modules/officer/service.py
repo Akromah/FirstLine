@@ -24,6 +24,13 @@ class SecureMessage(BaseModel):
     priority: str = "NORMAL"
 
 
+class HandoffNoteRequest(BaseModel):
+    incident_id: str
+    unit_id: str
+    note: str
+    audience: str = "ALL"
+
+
 def active_calls_for_unit(unit_id: str) -> dict:
     assigned = state.get_assigned_incidents_for_unit(unit_id)
     return {
@@ -116,6 +123,33 @@ def incident_channel(incident_id: str, limit: int = 40) -> dict:
         "incident_id": incident_id,
         "message_count": len(messages),
         "messages": messages,
+    }
+
+
+def add_handoff_note(payload: HandoffNoteRequest) -> dict | None:
+    note = state.add_handoff_note(
+        incident_id=payload.incident_id,
+        unit_id=payload.unit_id,
+        note=payload.note,
+        audience=payload.audience,
+    )
+    if not note:
+        return None
+    return {
+        "ok": True,
+        "note": note,
+        "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+
+
+def handoff_notes(incident_id: str, limit: int = 20) -> dict | None:
+    notes = state.list_handoff_notes(incident_id=incident_id, limit=limit)
+    if notes is None:
+        return None
+    return {
+        "incident_id": incident_id,
+        "note_count": len(notes),
+        "notes": notes,
     }
 
 

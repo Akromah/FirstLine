@@ -140,6 +140,19 @@ type IncidentChannel = {
   message_count: number;
   messages: MessageThread[];
 };
+type HandoffNote = {
+  note_id: string;
+  incident_id: string;
+  unit_id: string;
+  audience: string;
+  note: string;
+  created_at: string;
+};
+type HandoffFeed = {
+  incident_id: string;
+  note_count: number;
+  notes: HandoffNote[];
+};
 type OfficerFeed = {
   unit_id: string;
   assigned_incidents: Array<{
@@ -344,6 +357,9 @@ export default function App() {
   const [sendToIncidentChannel, setSendToIncidentChannel] = useState(true);
   const [messageBody, setMessageBody] = useState("");
   const [messageStatus, setMessageStatus] = useState("");
+  const [handoffAudience, setHandoffAudience] = useState("ALL");
+  const [handoffNoteText, setHandoffNoteText] = useState("");
+  const [handoffFeed, setHandoffFeed] = useState<HandoffFeed | null>(null);
 
   const [intelQuery, setIntelQuery] = useState("Brandon");
   const [lookup, setLookup] = useState<LookupResult | null>(null);
@@ -446,6 +462,22 @@ export default function App() {
     }
     loadIncidentChannel();
   }, [channelIncidentId]);
+
+  useEffect(() => {
+    async function loadHandoffFeed() {
+      if (!selectedIncident?.incident_id) {
+        setHandoffFeed(null);
+        return;
+      }
+      try {
+        const feed = await fetchJson<HandoffFeed>(`/api/v1/officer/handoff/${selectedIncident.incident_id}?limit=8`);
+        setHandoffFeed(feed);
+      } catch {
+        setHandoffFeed(null);
+      }
+    }
+    loadHandoffFeed();
+  }, [selectedIncident?.incident_id, queue.length]);
 
   useEffect(() => {
     if (sessionRole === "Officer") {
@@ -592,6 +624,7 @@ export default function App() {
     setChannelIncidentId(selectedIncident.incident_id);
     setIncidentIntel(null);
     setAiDispositionDraft(null);
+    setHandoffNoteText("");
   }, [selectedIncident?.incident_id]);
 
   useEffect(() => {
@@ -1230,6 +1263,31 @@ export default function App() {
     }
   }
 
+  async function handlePostHandoffNote() {
+    if (!selectedIncident || !statusUnitId || !handoffNoteText.trim()) return;
+    setLoading(true);
+    try {
+      await fetchJson("/api/v1/officer/handoff", {
+        method: "POST",
+        body: JSON.stringify({
+          incident_id: selectedIncident.incident_id,
+          unit_id: statusUnitId,
+          note: handoffNoteText.trim(),
+          audience: handoffAudience,
+        }),
+      });
+      setHandoffNoteText("");
+      const feed = await fetchJson<HandoffFeed>(`/api/v1/officer/handoff/${selectedIncident.incident_id}?limit=8`);
+      setHandoffFeed(feed);
+      setBanner(`Handoff note posted for ${selectedIncident.incident_id}.`);
+      await refreshDashboard();
+    } catch (error) {
+      setBanner(`Handoff note failed: ${(error as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleFinalizeDisposition() {
     if (!selectedIncident || !statusUnitId) return;
     setLoading(true);
@@ -1777,6 +1835,41 @@ export default function App() {
                 "No action recorded"}
             </div>
             {safetyBriefing ? <div className="ai-box"><p>{safetyBriefing.briefing}</p><p>Risk score: {safetyBriefing.risk_score}</p><p>Hazards: {safetyBriefing.hazards.join(" | ")}</p><p>Checklist: {safetyBriefing.checklist.join(" | ")}</p></div> : null}
+            <div className="template-row">
+              <label className="form-field">
+                Handoff Audience
+                <select value={handoffAudience} onChange={(e) => setHandoffAudience(e.target.value)}>
+                  <option value="ALL">ALL</option>
+                  <option value="SUPERVISOR">SUPERVISOR</option>
+                  <option value="NEXT_UNIT">NEXT_UNIT</option>
+                  <option value="DETECTIVE">DETECTIVE</option>
+                </select>
+              </label>
+              <label className="form-field">
+                Handoff Note
+                <input
+                  value={handoffNoteText}
+                  onChange={(e) => setHandoffNoteText(e.target.value)}
+                  placeholder="Scene update for shift handoff..."
+                />
+              </label>
+            </div>
+            <div className="dev-actions">
+              <button type="button" onClick={handlePostHandoffNote} disabled={loading || !handoffNoteText.trim()}>
+                Post Handoff Note
+              </button>
+            </div>
+            {(handoffFeed?.notes ?? []).length > 0 ? (
+              <div className="timeline-list">
+                {(handoffFeed?.notes ?? []).slice(0, 4).map((item) => (
+                  <div key={item.note_id} className="timeline-item">
+                    <strong>{item.unit_id} {"->"} {item.audience}</strong>
+                    <p>{item.created_at}</p>
+                    <p>{item.note}</p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             <div className="timeline-list">
               {recentTimeline.map((event, index) => (
                 <div key={`${event.time}-${index}`} className="timeline-item">
