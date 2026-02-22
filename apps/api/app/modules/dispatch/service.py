@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from math import asin, cos, radians, sin, sqrt
 
 from pydantic import BaseModel
@@ -151,3 +152,43 @@ def finalize_disposition(payload: DispositionRequest) -> DispositionResponse:
         status=incident["status"],
         disposition=incident["disposition"] or {},
     )
+
+
+def build_unit_readiness_board() -> dict:
+    units = get_live_units()
+    board: list[dict] = []
+    for unit in units:
+        active_assignments = len(state.get_assigned_incidents_for_unit(unit.unit_id))
+        readiness_score = max(
+            0,
+            min(
+                100,
+                int(
+                    100
+                    - (unit.fatigue_score * 0.55)
+                    - (unit.workload_score * 0.35)
+                    - (10 if unit.status not in {"AVAILABLE", "EN_ROUTE"} else 0)
+                ),
+            ),
+        )
+        requires_break = unit.fatigue_score >= 70 or readiness_score <= 35
+        board.append(
+            {
+                "unit_id": unit.unit_id,
+                "callsign": unit.callsign,
+                "status": unit.status,
+                "skills": unit.skills,
+                "workload_score": unit.workload_score,
+                "fatigue_score": unit.fatigue_score,
+                "active_assignments": active_assignments,
+                "readiness_score": readiness_score,
+                "requires_break": requires_break,
+            }
+        )
+
+    board.sort(key=lambda row: row["readiness_score"], reverse=True)
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "units": board,
+        "break_recommendations": [row["unit_id"] for row in board if row["requires_break"]],
+    }

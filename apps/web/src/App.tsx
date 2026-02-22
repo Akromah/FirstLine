@@ -4,6 +4,18 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 type Coordinates = { lat: number; lon: number };
 type IncidentSummary = { incident_id: string; call_type: string; priority: number; address: string; coordinates: Coordinates; status: string };
 type UnitSummary = { unit_id: string; callsign: string; status: string; coordinates: Coordinates; skills: string[]; workload_score: number; fatigue_score: number };
+type UnitReadiness = {
+  unit_id: string;
+  callsign: string;
+  status: string;
+  skills: string[];
+  workload_score: number;
+  fatigue_score: number;
+  active_assignments: number;
+  readiness_score: number;
+  requires_break: boolean;
+};
+type UnitBoard = { units: UnitReadiness[]; break_recommendations: string[] };
 type ReportDraft = {
   report_id: string;
   incident_id: string;
@@ -160,6 +172,7 @@ export default function App() {
   const [units, setUnits] = useState<UnitSummary[]>([]);
   const [command, setCommand] = useState<any>(null);
   const [commandTrends, setCommandTrends] = useState<CommandTrends | null>(null);
+  const [unitBoard, setUnitBoard] = useState<UnitBoard | null>(null);
   const [mapData, setMapData] = useState<any>(null);
   const [mapReady, setMapReady] = useState(false);
   const [reportHub, setReportHub] = useState<ReportingHub | null>(null);
@@ -299,9 +312,10 @@ export default function App() {
       const channelPromise = selectedIncidentIdRef.current
         ? fetchJson<IncidentChannel>(`/api/v1/officer/channel/${selectedIncidentIdRef.current}?limit=10`).catch(() => null)
         : Promise.resolve(null);
-      const [q, u, c, ct, m, h, rq, inbox, feed, channel] = await Promise.all([
+      const [q, u, ub, c, ct, m, h, rq, inbox, feed, channel] = await Promise.all([
         fetchJson<{ incidents: IncidentSummary[] }>("/api/v1/dispatch/queue"),
         fetchJson<{ units: UnitSummary[] }>("/api/v1/dispatch/units"),
+        fetchJson<UnitBoard>("/api/v1/dispatch/unit-board"),
         fetchJson<any>("/api/v1/command/overview"),
         fetchJson<CommandTrends>("/api/v1/command/trends?periods=6"),
         fetchJson<any>("/api/v1/map/overview"),
@@ -313,6 +327,7 @@ export default function App() {
       ]);
       setQueue(q.incidents);
       setUnits(u.units);
+      setUnitBoard(ub);
       setCommand(c);
       setCommandTrends(ct);
       setMapData(m);
@@ -972,6 +987,7 @@ export default function App() {
         <span className="chip">Geofence alerts: {mapData?.geofenced_alerts.filter((item: any) => item.active).length ?? 0}</span>
         <span className="chip">Report drafts: {reportHub?.drafts.length ?? 0}</span>
         <span className="chip">Supervisor review: {reviewQueue?.review_count ?? 0}</span>
+        <span className="chip">Break flags: {unitBoard?.break_recommendations.length ?? 0}</span>
       </div>
 
       <main className="layout">
@@ -1192,6 +1208,21 @@ export default function App() {
               <div className="kpi"><span>Units Available</span><strong>{command?.units_available ?? 0}</strong></div>
               <div className="kpi"><span>Avg ETA</span><strong>{command?.average_response_minutes ?? 0}m</strong></div>
             </div>
+          </article>
+          ) : null}
+          {(showDispatch || showField) ? (
+          <article className="card panel">
+            <h2>Unit Readiness Board</h2>
+            <p className="section-subtitle">Fatigue and workload guardrail for dispatch decisions.</p>
+            {(unitBoard?.units ?? []).slice(0, 5).map((unit) => (
+              <div key={unit.unit_id} className="hub-row">
+                <strong>{unit.callsign} · {unit.status}</strong>
+                <p>{unit.unit_id} · Assignments {unit.active_assignments} · Fatigue {unit.fatigue_score} · Workload {unit.workload_score}</p>
+                <div className="readiness-bar"><div className={`readiness-fill ${unit.requires_break ? "risk" : ""}`} style={{ width: `${unit.readiness_score}%` }} /></div>
+                <p>Readiness {unit.readiness_score}/100 · {unit.requires_break ? "Break recommended" : "Operational"}</p>
+                <p>Skills: {unit.skills.join(", ")}</p>
+              </div>
+            ))}
           </article>
           ) : null}
           {(showDispatch || showReport) ? (

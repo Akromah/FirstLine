@@ -7,6 +7,7 @@ from app.modules.dispatch.service import (
     AssignmentResponse,
     DispositionRequest,
     DispositionResponse,
+    build_unit_readiness_board,
     choose_unit,
     finalize_disposition,
 )
@@ -24,6 +25,11 @@ def list_units() -> dict:
 def list_dispatch_queue() -> dict:
     incidents = state.list_incident_summaries()
     return {"incidents": [incident.model_dump() for incident in incidents]}
+
+
+@router.get("/unit-board")
+def unit_readiness_board() -> dict:
+    return build_unit_readiness_board()
 
 
 @router.get("/incident/{incident_id}")

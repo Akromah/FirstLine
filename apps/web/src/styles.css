@@ -752,6 +752,24 @@ body {
   font-size: 11px;
 }
 
+.readiness-bar {
+  margin-top: 6px;
+  height: 8px;
+  border-radius: 999px;
+  border: 1px solid #2d4d77;
+  background: #0e1a2f;
+  overflow: hidden;
+}
+
+.readiness-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #1f9d61, #6ecb8e);
+}
+
+.readiness-fill.risk {
+  background: linear-gradient(90deg, #b83a4b, #e76d7d);
+}
+
 .dictation-controls {
   border: 1px solid #29476f;
   border-radius: 10px;

@@ -27,6 +27,10 @@ def test_intake_dispatch_reporting_flow() -> None:
     queue_payload = queue_response.json()
     assert any(incident["incident_id"] == incident_id for incident in queue_payload["incidents"])
 
+    unit_board_response = client.get("/api/v1/dispatch/unit-board")
+    assert unit_board_response.status_code == 200
+    assert len(unit_board_response.json()["units"]) >= 1
+
     risk_response = client.get(f"/api/v1/intake/risk/{incident_id}")
     assert risk_response.status_code == 200
     risk_payload = risk_response.json()
