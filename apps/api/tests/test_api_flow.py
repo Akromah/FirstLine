@@ -137,6 +137,12 @@ def test_intake_dispatch_reporting_flow() -> None:
     assert trend_payload["periods"] == 6
     assert "average_response_minutes" in trend_payload["metrics"]
 
+    executive_brief_response = client.get("/api/v1/command/executive-brief", params={"periods": 6})
+    assert executive_brief_response.status_code == 200
+    executive_brief_payload = executive_brief_response.json()
+    assert "overview" in executive_brief_payload
+    assert "priority_radar" in executive_brief_payload
+
     draft_response = client.post(
         "/api/v1/reporting/draft",
         json={

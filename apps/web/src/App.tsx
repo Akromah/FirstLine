@@ -1156,6 +1156,27 @@ export default function App() {
     setBanner(`Exported incident packet for ${selectedIncident.incident_id}.`);
   }
 
+  async function handleExportExecutiveBrief() {
+    setLoading(true);
+    try {
+      const payload = await fetchJson<any>("/api/v1/command/executive-brief?periods=8");
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `firstline-executive-brief-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      setBanner("Exported executive brief.");
+    } catch (error) {
+      setBanner(`Executive brief export failed: ${(error as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleLoadProfile(personId: string) {
     setLoading(true);
     try {
@@ -1621,6 +1642,7 @@ export default function App() {
           {activeModule === "commandDash" ? (
           <article className="card panel">
             <h2>Command Dashboard</h2>
+            <div className="dev-actions"><button type="button" onClick={handleExportExecutiveBrief} disabled={loading}>Export Executive Brief</button></div>
             <div className="kpi-grid">
               <div className="kpi"><span>Active Incidents</span><strong>{command?.active_incidents ?? 0}</strong></div>
               <div className="kpi"><span>Pending Calls</span><strong>{command?.pending_calls ?? 0}</strong></div>
