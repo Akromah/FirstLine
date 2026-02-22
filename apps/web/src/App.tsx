@@ -81,6 +81,15 @@ type OfficerFeed = {
     history_at_address: string[];
   }>;
 };
+type CommandTrends = {
+  periods: number;
+  metrics: {
+    active_incidents: { series: number[]; change: number };
+    pending_calls: { series: number[]; change: number };
+    units_busy: { series: number[]; change: number };
+    average_response_minutes: { series: number[]; change: number };
+  };
+};
 type AIReportAssist = {
   improved_narrative: string;
   key_points: string[];
@@ -132,6 +141,14 @@ function serializeFields(fields: Record<string, string>): string {
   return Object.entries(fields).map(([k, v]) => `${k}=${v}`).join(";");
 }
 
+function trendSeries(series: number[]): string {
+  return series.map((value) => Number(value).toFixed(value % 1 === 0 ? 0 : 1)).join(" -> ");
+}
+
+function signed(value: number, suffix = ""): string {
+  return `${value >= 0 ? "+" : ""}${value}${suffix}`;
+}
+
 export default function App() {
   const [started, setStarted] = useState(false);
   const [sessionRole, setSessionRole] = useState("Dispatcher");
@@ -142,6 +159,7 @@ export default function App() {
   const [queue, setQueue] = useState<IncidentSummary[]>([]);
   const [units, setUnits] = useState<UnitSummary[]>([]);
   const [command, setCommand] = useState<any>(null);
+  const [commandTrends, setCommandTrends] = useState<CommandTrends | null>(null);
   const [mapData, setMapData] = useState<any>(null);
   const [mapReady, setMapReady] = useState(false);
   const [reportHub, setReportHub] = useState<ReportingHub | null>(null);
@@ -281,10 +299,11 @@ export default function App() {
       const channelPromise = selectedIncidentIdRef.current
         ? fetchJson<IncidentChannel>(`/api/v1/officer/channel/${selectedIncidentIdRef.current}?limit=10`).catch(() => null)
         : Promise.resolve(null);
-      const [q, u, c, m, h, rq, inbox, feed, channel] = await Promise.all([
+      const [q, u, c, ct, m, h, rq, inbox, feed, channel] = await Promise.all([
         fetchJson<{ incidents: IncidentSummary[] }>("/api/v1/dispatch/queue"),
         fetchJson<{ units: UnitSummary[] }>("/api/v1/dispatch/units"),
         fetchJson<any>("/api/v1/command/overview"),
+        fetchJson<CommandTrends>("/api/v1/command/trends?periods=6"),
         fetchJson<any>("/api/v1/map/overview"),
         fetchJson<ReportingHub>("/api/v1/reporting/hub"),
         fetchJson<ReviewQueue>("/api/v1/reporting/review-queue"),
@@ -295,6 +314,7 @@ export default function App() {
       setQueue(q.incidents);
       setUnits(u.units);
       setCommand(c);
+      setCommandTrends(ct);
       setMapData(m);
       setReportHub(h);
       setReviewQueue(rq);
@@ -1171,6 +1191,24 @@ export default function App() {
               <div className="kpi"><span>Pending Calls</span><strong>{command?.pending_calls ?? 0}</strong></div>
               <div className="kpi"><span>Units Available</span><strong>{command?.units_available ?? 0}</strong></div>
               <div className="kpi"><span>Avg ETA</span><strong>{command?.average_response_minutes ?? 0}m</strong></div>
+            </div>
+          </article>
+          ) : null}
+          {(showDispatch || showReport) ? (
+          <article className="card panel">
+            <h2>Operational Trends</h2>
+            <p className="section-subtitle">Last {commandTrends?.periods ?? 0} snapshots</p>
+            <div className="hub-row">
+              <strong>Active Incidents ({signed(commandTrends?.metrics.active_incidents.change ?? 0)})</strong>
+              <p>{trendSeries(commandTrends?.metrics.active_incidents.series ?? [])}</p>
+            </div>
+            <div className="hub-row">
+              <strong>Avg ETA ({signed(commandTrends?.metrics.average_response_minutes.change ?? 0, "m")})</strong>
+              <p>{trendSeries(commandTrends?.metrics.average_response_minutes.series ?? [])}</p>
+            </div>
+            <div className="hub-row">
+              <strong>Units Busy ({signed(commandTrends?.metrics.units_busy.change ?? 0)})</strong>
+              <p>{trendSeries(commandTrends?.metrics.units_busy.series ?? [])}</p>
             </div>
           </article>
           ) : null}

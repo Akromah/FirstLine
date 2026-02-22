@@ -109,6 +109,12 @@ def test_intake_dispatch_reporting_flow() -> None:
     assert command_payload["active_incidents"] >= 1
     assert command_payload["units_busy"] >= 1
 
+    trend_response = client.get("/api/v1/command/trends", params={"periods": 6})
+    assert trend_response.status_code == 200
+    trend_payload = trend_response.json()
+    assert trend_payload["periods"] == 6
+    assert "average_response_minutes" in trend_payload["metrics"]
+
     draft_response = client.post(
         "/api/v1/reporting/draft",
         json={

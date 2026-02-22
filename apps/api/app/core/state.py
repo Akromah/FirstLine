@@ -63,6 +63,7 @@ class InMemoryState:
         self._incidents: dict[str, dict] = {}
         self._messages: list[dict] = []
         self._report_drafts: dict[str, dict] = {}
+        self._command_history: list[dict] = []
         self._person_records: list[dict] = []
         self._firearms_registry: list[dict] = []
         self._warrant_registry: list[dict] = []
@@ -748,7 +749,7 @@ class InMemoryState:
             acceptance_rate = min(0.99, round(0.72 + (len(assigned_incidents) * 0.02), 2))
             duplicate_rate = round(with_duplicates / total_calls, 2)
 
-            return {
+            snapshot = {
                 "generated_at": utc_now_iso(),
                 "active_incidents": len(active_incidents),
                 "pending_calls": len(pending_calls),
@@ -763,6 +764,54 @@ class InMemoryState:
                     "recommendation_acceptance_rate": acceptance_rate,
                     "duplicate_call_merge_rate": duplicate_rate,
                     "transcription_uptime": 0.996,
+                },
+            }
+            self._command_history.append(
+                {
+                    "generated_at": snapshot["generated_at"],
+                    "active_incidents": snapshot["active_incidents"],
+                    "pending_calls": snapshot["pending_calls"],
+                    "units_busy": snapshot["units_busy"],
+                    "average_response_minutes": snapshot["average_response_minutes"],
+                }
+            )
+            if len(self._command_history) > 120:
+                self._command_history = self._command_history[-120:]
+            return snapshot
+
+    def get_command_trends(self, periods: int = 8) -> dict:
+        with self._lock:
+            if not self._command_history:
+                self.build_command_snapshot()
+
+            capped = max(3, min(periods, 30))
+            points = self._command_history[-capped:]
+
+            def values(key: str) -> list[float]:
+                output = [float(item.get(key, 0)) for item in points]
+                if output:
+                    return output
+                return [0.0]
+
+            active = values("active_incidents")
+            pending = values("pending_calls")
+            units_busy = values("units_busy")
+            avg_eta = values("average_response_minutes")
+
+            def change(data: list[float]) -> float:
+                if len(data) < 2:
+                    return 0.0
+                return round(data[-1] - data[0], 2)
+
+            return {
+                "generated_at": utc_now_iso(),
+                "periods": capped,
+                "points": points,
+                "metrics": {
+                    "active_incidents": {"series": active, "change": change(active)},
+                    "pending_calls": {"series": pending, "change": change(pending)},
+                    "units_busy": {"series": units_busy, "change": change(units_busy)},
+                    "average_response_minutes": {"series": avg_eta, "change": change(avg_eta)},
                 },
             }
 
