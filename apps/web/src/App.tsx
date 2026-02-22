@@ -221,6 +221,8 @@ export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>("Dispatch");
   const [activeModule, setActiveModule] = useState<ModulePanel>("queue");
   const [moduleSearch, setModuleSearch] = useState("");
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [commandPaletteQuery, setCommandPaletteQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [banner, setBanner] = useState("Console initialized.");
 
@@ -325,6 +327,7 @@ export default function App() {
   const statusUnitIdRef = useRef(statusUnitId);
   const dictationRef = useRef<any>(null);
   const dictationStartRef = useRef<number | null>(null);
+  const commandPaletteInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     try {
@@ -777,8 +780,40 @@ export default function App() {
   }, [started]);
 
   useEffect(() => {
+    function onPaletteToggle(event: KeyboardEvent) {
+      const active = document.activeElement?.tagName;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandPaletteOpen((prev) => !prev);
+        setCommandPaletteQuery("");
+      }
+      if (
+        event.key === "Escape" &&
+        commandPaletteOpen &&
+        active !== "INPUT" &&
+        active !== "TEXTAREA" &&
+        active !== "SELECT"
+      ) {
+        setCommandPaletteOpen(false);
+      }
+    }
+
+    window.addEventListener("keydown", onPaletteToggle);
+    return () => window.removeEventListener("keydown", onPaletteToggle);
+  }, [commandPaletteOpen]);
+
+  useEffect(() => {
+    if (!commandPaletteOpen) return;
+    const timer = window.setTimeout(() => commandPaletteInputRef.current?.focus(), 30);
+    return () => window.clearTimeout(timer);
+  }, [commandPaletteOpen]);
+
+  useEffect(() => {
     function onEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") setMapFocusMode(false);
+      if (event.key === "Escape") {
+        setMapFocusMode(false);
+        setCommandPaletteOpen(false);
+      }
     }
     window.addEventListener("keydown", onEscape);
     return () => window.removeEventListener("keydown", onEscape);
@@ -1329,6 +1364,60 @@ export default function App() {
   const visibleModuleButtons = moduleButtons.filter(
     (item) => item.visible && item.label.toLowerCase().includes(moduleSearch.trim().toLowerCase())
   );
+  const commandPaletteItems = [
+    {
+      id: "refresh",
+      label: "Refresh dashboard data",
+      hint: "System",
+      run: () => {
+        void refreshDashboard();
+      },
+    },
+    {
+      id: "map-focus",
+      label: mapFocusMode ? "Exit map focus mode" : "Enter map focus mode",
+      hint: "Map",
+      run: () => setMapFocusMode((prev) => !prev),
+    },
+    {
+      id: "map-center",
+      label: "Center map on selected incident",
+      hint: selectedIncident?.incident_id ?? "Map",
+      run: () => {
+        if (!selectedIncident || !mapRef.current) return;
+        mapRef.current.flyTo({ center: [selectedIncident.coordinates.lon, selectedIncident.coordinates.lat], zoom: 13, speed: 0.6 });
+      },
+    },
+    {
+      id: "quick-recommend",
+      label: "Run unit recommendation",
+      hint: selectedIncident?.incident_id ?? "Dispatch",
+      run: () => {
+        void handleRecommend();
+      },
+    },
+    {
+      id: "quick-draft",
+      label: "Save report draft",
+      hint: selectedIncident?.incident_id ?? "Report",
+      run: () => {
+        void handleSaveDraft();
+      },
+    },
+    ...moduleButtons
+      .filter((item) => item.visible)
+      .map((item) => ({
+        id: `module-${item.id}`,
+        label: `Open ${item.label}`,
+        hint: "Module",
+        run: () => setActiveModule(item.id),
+      })),
+  ];
+  const filteredCommandPaletteItems = commandPaletteItems.filter((item) => {
+    const query = commandPaletteQuery.trim().toLowerCase();
+    if (!query) return true;
+    return item.label.toLowerCase().includes(query) || item.hint.toLowerCase().includes(query);
+  });
 
   useEffect(() => {
     const visibleModules = moduleButtons.filter((item) => item.visible).map((item) => item.id);
@@ -1366,6 +1455,7 @@ export default function App() {
         </div>
         <div className="top-role-row">
           <span className="role-badge">{sessionRole}</span>
+          <button className="dispatch-secondary" type="button" onClick={() => setCommandPaletteOpen(true)}>Cmd Palette</button>
           <button className="dispatch-secondary" type="button" onClick={refreshDashboard}>Refresh</button>
         </div>
       </header>
@@ -1926,6 +2016,45 @@ export default function App() {
           </article> : null}
         </aside> : null}
       </main>
+
+      {commandPaletteOpen ? (
+        <div className="overlay" onClick={() => setCommandPaletteOpen(false)}>
+          <section className="overlay-card palette-card" onClick={(event) => event.stopPropagation()}>
+            <div className="overlay-head">
+              <h3>Command Palette</h3>
+              <button type="button" onClick={() => setCommandPaletteOpen(false)}>Close</button>
+            </div>
+            <p className="overlay-subtitle">Use Ctrl+K to reopen quickly.</p>
+            <input
+              ref={commandPaletteInputRef}
+              className="module-search palette-search"
+              value={commandPaletteQuery}
+              onChange={(event) => setCommandPaletteQuery(event.target.value)}
+              placeholder="Search modules or actions..."
+            />
+            <div className="timeline-list">
+              {filteredCommandPaletteItems.slice(0, 12).map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="list-row static palette-row"
+                  onClick={() => {
+                    item.run();
+                    setCommandPaletteOpen(false);
+                  }}
+                >
+                  <div>
+                    <strong>{item.label}</strong>
+                    <p>{item.hint}</p>
+                  </div>
+                  <span className="badge soft">Run</span>
+                </button>
+              ))}
+              {filteredCommandPaletteItems.length === 0 ? <div className="dispatch-banner warn">No matching command.</div> : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       <nav className="bottom-nav">
         {(["Dispatch", "Field", "Report", "Intel"] as ViewMode[]).map((mode) => (

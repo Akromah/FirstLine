@@ -650,6 +650,19 @@ body {
   padding: 14px;
 }
 
+.palette-card {
+  width: min(760px, 100%);
+}
+
+.palette-search {
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.palette-row {
+  align-items: center;
+}
+
 .overlay-head {
   display: flex;
   align-items: center;
