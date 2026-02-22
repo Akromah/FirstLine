@@ -81,6 +81,22 @@ def rank_units(payload: AssignmentRequest) -> list[tuple[float, UnitSummary, int
 def choose_unit(payload: AssignmentRequest, commit: bool = True) -> AssignmentResponse:
     ranked = rank_units(payload)
     best_score, best_unit, match_count, distance_km = ranked[0]
+    incident = state.get_incident(payload.incident_id)
+    incident_priority = int(incident["priority"]) if incident and incident.get("priority") is not None else 0
+    fatigue_guardrail_triggered = False
+
+    if incident_priority < 85 and best_unit.fatigue_score >= 70:
+        alternative = next(
+            (
+                row
+                for row in ranked[1:]
+                if row[1].fatigue_score < 70 and row[1].status in {"AVAILABLE", "EN_ROUTE", "ON_SCENE"}
+            ),
+            None,
+        )
+        if alternative and alternative[0] >= (best_score - 10):
+            best_score, best_unit, match_count, distance_km = alternative
+            fatigue_guardrail_triggered = True
 
     eta = max(2, int(round(distance_km / 0.75)))
     confidence = round(min(0.98, max(0.45, (best_score + 30) / 100)), 2)
@@ -91,6 +107,8 @@ def choose_unit(payload: AssignmentRequest, commit: bool = True) -> AssignmentRe
         f"Workload score: {best_unit.workload_score}",
         f"Fatigue score: {best_unit.fatigue_score}",
     ]
+    if fatigue_guardrail_triggered:
+        reasons.append("Fatigue guardrail applied: selected lower-fatigue unit.")
 
     response = AssignmentResponse(
         incident_id=payload.incident_id,
