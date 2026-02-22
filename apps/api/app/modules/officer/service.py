@@ -199,3 +199,83 @@ def quick_actions(incident_id: str, unit_id: str | None = None) -> dict | None:
         "actions": actions,
         "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
+
+
+def _parse_iso(value: str | None) -> datetime:
+    if not value:
+        return datetime.now(timezone.utc)
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.now(timezone.utc)
+
+
+def call_history(unit_id: str, limit: int = 40) -> dict:
+    today_utc = datetime.now(timezone.utc).date()
+    all_incidents = state.list_incident_summaries(include_closed=True)
+    rows: list[dict] = []
+
+    for summary in all_incidents:
+        incident = state.get_incident(summary.incident_id)
+        if not incident or incident.get("assigned_unit_id") != unit_id:
+            continue
+
+        created_at = _parse_iso(incident.get("created_at"))
+        if created_at.date() != today_utc:
+            continue
+
+        drafts = [
+            draft
+            for draft in state.list_report_drafts(incident_id=incident["incident_id"])
+            if draft.get("unit_id") == unit_id
+        ]
+        documents: list[dict] = []
+        for draft in drafts:
+            documents.append(
+                {
+                    "doc_type": "REPORT_DRAFT",
+                    "report_id": draft.get("report_id"),
+                    "status": draft.get("status"),
+                    "review_status": draft.get("review_status"),
+                    "updated_at": draft.get("updated_at"),
+                    "uri": f"report://{draft.get('report_id')}",
+                }
+            )
+            for evidence in draft.get("evidence_links", []):
+                documents.append(
+                    {
+                        "doc_type": f"EVIDENCE_{str(evidence.get('type', 'FILE')).upper()}",
+                        "report_id": draft.get("report_id"),
+                        "status": "LINKED",
+                        "review_status": None,
+                        "updated_at": evidence.get("added_at"),
+                        "uri": evidence.get("uri"),
+                    }
+                )
+
+        call_display = f"{incident.get('primary_code') or ''} {incident.get('crime_label') or incident.get('call_type')}".strip()
+        rows.append(
+            {
+                "incident_id": incident["incident_id"],
+                "call_display": call_display,
+                "call_type": incident.get("call_type"),
+                "priority": incident.get("priority"),
+                "address": incident.get("address"),
+                "status": incident.get("status"),
+                "created_at": incident.get("created_at"),
+                "closed_at": (incident.get("disposition") or {}).get("closed_at"),
+                "disposition_code": (incident.get("disposition") or {}).get("disposition_code"),
+                "disposition_summary": (incident.get("disposition") or {}).get("summary"),
+                "documents": documents,
+                "document_count": len(documents),
+            }
+        )
+
+    rows.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+    capped = rows[: max(1, min(limit, 200))]
+    return {
+        "unit_id": unit_id,
+        "history_date_utc": str(today_utc),
+        "call_count": len(capped),
+        "calls": capped,
+    }

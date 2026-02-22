@@ -76,6 +76,13 @@ def test_intake_dispatch_reporting_flow() -> None:
     assert assignment_payload["recommended_unit_id"]
     assert assignment_payload["predicted_eta_minutes"] >= 2
 
+    officer_feed_response = client.get(f"/api/v1/officer/feed/{assignment_payload['recommended_unit_id']}")
+    assert officer_feed_response.status_code == 200
+    assert any(
+        item["incident_id"] == incident_id
+        for item in officer_feed_response.json()["assigned_incidents"]
+    )
+
     detail_response = client.get(f"/api/v1/dispatch/incident/{incident_id}")
     assert detail_response.status_code == 200
     detail_payload = detail_response.json()
@@ -245,6 +252,20 @@ def test_intake_dispatch_reporting_flow() -> None:
     assert evidence_response.status_code == 200
     assert len(evidence_response.json()["evidence_links"]) >= 1
 
+    call_history_with_docs = client.get(
+        f"/api/v1/officer/call-history/{assignment_payload['recommended_unit_id']}",
+        params={"limit": 25},
+    )
+    assert call_history_with_docs.status_code == 200
+    history_with_docs_payload = call_history_with_docs.json()
+    history_with_docs_item = next(
+        (item for item in history_with_docs_payload["calls"] if item["incident_id"] == incident_id),
+        None,
+    )
+    assert history_with_docs_item is not None
+    assert any(doc["doc_type"] == "REPORT_DRAFT" for doc in history_with_docs_item["documents"])
+    assert any(doc["doc_type"].startswith("EVIDENCE_") for doc in history_with_docs_item["documents"])
+
     report_audit_response = client.post(
         "/api/v1/reporting/audit",
         json={
@@ -365,6 +386,20 @@ def test_intake_dispatch_reporting_flow() -> None:
     )
     assert readiness_after_disposition.status_code == 200
     assert readiness_after_disposition.json()["has_disposition"] is True
+
+    call_history_after_close = client.get(
+        f"/api/v1/officer/call-history/{assignment_payload['recommended_unit_id']}",
+        params={"limit": 25},
+    )
+    assert call_history_after_close.status_code == 200
+    history_after_close_payload = call_history_after_close.json()
+    history_after_close_item = next(
+        (item for item in history_after_close_payload["calls"] if item["incident_id"] == incident_id),
+        None,
+    )
+    assert history_after_close_item is not None
+    assert history_after_close_item["status"] == "CLOSED"
+    assert history_after_close_item["disposition_code"] == "WARNING_ISSUED"
 
     quick_actions_after_disposition = client.get(
         f"/api/v1/officer/quick-actions/{incident_id}",

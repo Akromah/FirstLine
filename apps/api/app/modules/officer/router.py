@@ -7,6 +7,7 @@ from app.modules.officer.service import (
     SecureMessage,
     add_handoff_note,
     active_calls_for_unit,
+    call_history,
     handoff_notes,
     incident_channel,
     message_inbox,
@@ -22,6 +23,11 @@ router = APIRouter()
 @router.get("/feed/{unit_id}")
 def get_officer_feed(unit_id: str) -> dict:
     return active_calls_for_unit(unit_id)
+
+
+@router.get("/call-history/{unit_id}")
+def get_officer_call_history(unit_id: str, limit: int = 40) -> dict:
+    return call_history(unit_id, limit=limit)
 
 
 @router.post("/status")

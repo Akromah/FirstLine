@@ -366,6 +366,32 @@ type OfficerFeed = {
     history_at_address: string[];
   }>;
 };
+type OfficerCallHistory = {
+  unit_id: string;
+  history_date_utc: string;
+  call_count: number;
+  calls: Array<{
+    incident_id: string;
+    call_display: string;
+    call_type: string;
+    priority: number;
+    address: string;
+    status: string;
+    created_at: string;
+    closed_at?: string | null;
+    disposition_code?: string | null;
+    disposition_summary?: string | null;
+    document_count: number;
+    documents: Array<{
+      doc_type: string;
+      report_id?: string | null;
+      status?: string | null;
+      review_status?: string | null;
+      updated_at?: string | null;
+      uri?: string | null;
+    }>;
+  }>;
+};
 type QuickActionsPolicy = {
   incident_id: string;
   unit_id?: string | null;
@@ -429,6 +455,7 @@ type ModulePanel =
   | "priorityRadar"
   | "fieldOps"
   | "assignedDeck"
+  | "callHistory"
   | "reportHub"
   | "intelHub"
   | "policyHub"
@@ -661,6 +688,7 @@ export default function App() {
   const [dictationInterim, setDictationInterim] = useState("");
   const [messageInbox, setMessageInbox] = useState<MessageInbox | null>(null);
   const [officerFeed, setOfficerFeed] = useState<OfficerFeed | null>(null);
+  const [officerCallHistory, setOfficerCallHistory] = useState<OfficerCallHistory | null>(null);
   const [messageTarget, setMessageTarget] = useState("DISPATCH");
   const [messageContactSearch, setMessageContactSearch] = useState("");
   const [messagePriority, setMessagePriority] = useState("NORMAL");
@@ -768,18 +796,22 @@ export default function App() {
       if (!statusUnitId) {
         setMessageInbox(null);
         setOfficerFeed(null);
+        setOfficerCallHistory(null);
         return;
       }
       try {
-        const [inbox, feed] = await Promise.all([
+        const [inbox, feed, history] = await Promise.all([
           fetchJson<MessageInbox>(`/api/v1/officer/messages/${statusUnitId}?limit=40`),
           fetchJson<OfficerFeed>(`/api/v1/officer/feed/${statusUnitId}`),
+          fetchJson<OfficerCallHistory>(`/api/v1/officer/call-history/${statusUnitId}?limit=25`),
         ]);
         setMessageInbox(inbox);
         setOfficerFeed(feed);
+        setOfficerCallHistory(history);
       } catch {
         setMessageInbox(null);
         setOfficerFeed(null);
+        setOfficerCallHistory(null);
       }
     }
     loadOfficerPanels();
@@ -830,10 +862,13 @@ export default function App() {
       const inboxPromise = statusUnitIdRef.current
         ? fetchJson<MessageInbox>(`/api/v1/officer/messages/${statusUnitIdRef.current}?limit=40`).catch(() => null)
         : Promise.resolve(null);
+      const historyPromise = statusUnitIdRef.current
+        ? fetchJson<OfficerCallHistory>(`/api/v1/officer/call-history/${statusUnitIdRef.current}?limit=25`).catch(() => null)
+        : Promise.resolve(null);
       const channelPromise = selectedIncidentIdRef.current
         ? fetchJson<IncidentChannel>(`/api/v1/officer/channel/${selectedIncidentIdRef.current}?limit=10`).catch(() => null)
         : Promise.resolve(null);
-      const [q, u, ub, ab, pb, c, ct, m, h, rm, rq, inbox, feed, channel] = await Promise.all([
+      const [q, u, ub, ab, pb, c, ct, m, h, rm, rq, inbox, feed, history, channel] = await Promise.all([
         fetchJson<{ incidents: IncidentSummary[] }>("/api/v1/dispatch/queue"),
         fetchJson<{ units: UnitSummary[] }>("/api/v1/dispatch/units"),
         fetchJson<UnitBoard>("/api/v1/dispatch/unit-board"),
@@ -847,6 +882,7 @@ export default function App() {
         fetchJson<ReviewQueue>("/api/v1/reporting/review-queue"),
         inboxPromise,
         feedPromise,
+        historyPromise,
         channelPromise,
       ]);
       setQueue(q.incidents);
@@ -863,6 +899,7 @@ export default function App() {
       setReviewQueue(rq);
       setMessageInbox(inbox);
       setOfficerFeed(feed);
+      setOfficerCallHistory(history);
       setIncidentChannel(channel);
       if (!selectedIncidentIdRef.current && q.incidents.length > 0) setSelectedIncidentId(q.incidents[0].incident_id);
       if (u.units.length > 0 && (!statusUnitIdRef.current || !u.units.some((item) => item.unit_id === statusUnitIdRef.current))) {
@@ -1620,19 +1657,21 @@ export default function App() {
     }
   }
 
-  async function handleOfficerAction(action: string) {
-    if (!selectedIncident || !statusUnitId) return;
+  async function handleOfficerAction(action: string, incidentIdOverride?: string) {
+    const incidentId = incidentIdOverride ?? selectedIncident?.incident_id;
+    if (!incidentId || !statusUnitId) return;
     setLoading(true);
     try {
       const result = await fetchJson<{ ok: boolean; error?: string }>("/api/v1/officer/action", {
         method: "POST",
-        body: JSON.stringify({ incident_id: selectedIncident.incident_id, unit_id: statusUnitId, action }),
+        body: JSON.stringify({ incident_id: incidentId, unit_id: statusUnitId, action }),
       });
       if (!result.ok) {
         setBanner(result.error ?? `Officer action blocked: ${action}`);
         return;
       }
-      setBanner(`Officer action recorded: ${action}`);
+      setSelectedIncidentId(incidentId);
+      setBanner(`Officer action recorded: ${action} on ${incidentId}.`);
       await refreshDashboard();
     } catch (error) {
       setBanner(`Officer action failed: ${(error as Error).message}`);
@@ -2376,6 +2415,7 @@ export default function App() {
     queue: filteredQueue.length,
     priorityRadar: priorityBoard?.incidents.filter((item) => item.risk_score >= 80).length,
     assignedDeck: officerFeed?.assigned_incidents.length,
+    callHistory: officerCallHistory?.call_count,
     reportHub: reportHub?.drafts.length,
     policyHub: policyResults?.result_count,
     codeHub: codeResults?.result_count,
@@ -2405,6 +2445,7 @@ export default function App() {
     { id: "unitReadiness", label: "Unit Board", icon: "UNIT", group: "ops", visible: canDispatchModules, badge: moduleCounts.unitReadiness },
     { id: "fieldOps", label: "Field Ops", icon: "OPS", group: "field", visible: canOfficerModules },
     { id: "assignedDeck", label: "Assigned Deck", icon: "CAR", group: "field", visible: canOfficerModules, badge: moduleCounts.assignedDeck },
+    { id: "callHistory", label: "Call History", icon: "HIS", group: "field", visible: canOfficerModules, badge: moduleCounts.callHistory },
     { id: "mobileControls", label: "Mobile Controls", icon: "MOB", group: "field", visible: canOfficerModules },
     { id: "messaging", label: "Messaging", icon: "MSG", group: "field", visible: canOfficerModules || canDispatchModules, badge: moduleCounts.messaging },
     { id: "disposition", label: "Disposition", icon: "FIN", group: "field", visible: canOfficerModules },
@@ -2973,10 +3014,80 @@ export default function App() {
                 <p>{call.address} · {call.status}</p>
                 <p>History: {call.history_at_address.join(" | ")}</p>
                 <div className="call-actions">
-                  <button type="button" onClick={() => { setSelectedIncidentId(call.incident_id); handleOfficerAction("ACCEPT"); }} disabled={loading}>Accept</button>
-                  <button type="button" onClick={() => { setSelectedIncidentId(call.incident_id); handleOfficerAction("EN_ROUTE"); }} disabled={loading}>En Route</button>
-                  <button type="button" onClick={() => { setSelectedIncidentId(call.incident_id); handleOfficerAction("ON_SCENE"); }} disabled={loading}>On Scene</button>
-                  <button type="button" onClick={() => { setSelectedIncidentId(call.incident_id); handleOfficerAction("CLEAR"); }} disabled={loading}>Clear</button>
+                  <button type="button" onClick={() => { setSelectedIncidentId(call.incident_id); void handleOfficerAction("ACCEPT", call.incident_id); }} disabled={loading}>Accept</button>
+                  <button type="button" onClick={() => { setSelectedIncidentId(call.incident_id); void handleOfficerAction("EN_ROUTE", call.incident_id); }} disabled={loading}>En Route</button>
+                  <button type="button" onClick={() => { setSelectedIncidentId(call.incident_id); void handleOfficerAction("ON_SCENE", call.incident_id); }} disabled={loading}>On Scene</button>
+                  <button type="button" onClick={() => { setSelectedIncidentId(call.incident_id); void handleOfficerAction("CLEAR", call.incident_id); }} disabled={loading}>Clear</button>
+                </div>
+              </div>
+            ))}
+          </article>
+          ) : null}
+          {activeModule === "callHistory" ? (
+          <article className="card panel module-overlay">
+            <h2>Officer Call History</h2>
+            <p className="section-subtitle">
+              Unit {statusUnitId} · Date {officerCallHistory?.history_date_utc ?? "n/a"} · Calls {officerCallHistory?.call_count ?? 0}
+            </p>
+            {(officerCallHistory?.calls ?? []).length === 0 ? (
+              <div className="dispatch-banner">No assigned calls recorded yet for this shift window.</div>
+            ) : null}
+            {(officerCallHistory?.calls ?? []).map((item) => (
+              <div key={item.incident_id} className="hub-row">
+                <strong>{item.incident_id} · {item.call_display || item.call_type} · P{item.priority}</strong>
+                <p>{item.address}</p>
+                <p>Status: {item.status} · Created: {item.created_at}{item.closed_at ? ` · Closed: ${item.closed_at}` : ""}</p>
+                {item.disposition_code ? <p>Disposition: {item.disposition_code} · {item.disposition_summary ?? "No summary"}</p> : null}
+                <div className="button-grid">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedIncidentId(item.incident_id);
+                      setActiveModule("assignedDeck");
+                    }}
+                    disabled={loading}
+                  >
+                    Open Call
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedIncidentId(item.incident_id);
+                      setActiveModule("reportHub");
+                    }}
+                    disabled={loading}
+                  >
+                    Open Report Hub
+                  </button>
+                </div>
+                <div className="timeline-list">
+                  {item.documents.length === 0 ? (
+                    <div className="timeline-item">
+                      <strong>Documents</strong>
+                      <p>No documents linked.</p>
+                    </div>
+                  ) : (
+                    item.documents.map((doc, index) => (
+                      <div key={`${item.incident_id}-${doc.doc_type}-${doc.uri ?? doc.report_id ?? index}`} className="timeline-item">
+                        <strong>{doc.doc_type}</strong>
+                        <p>{doc.report_id ? `Report ${doc.report_id}` : "Linked document"}</p>
+                        <p>{doc.status ?? "UNKNOWN"}{doc.review_status ? ` · ${doc.review_status}` : ""}</p>
+                        {doc.updated_at ? <p>{doc.updated_at}</p> : null}
+                        {doc.doc_type === "REPORT_DRAFT" && doc.report_id ? (
+                          <button type="button" onClick={() => void handleLoadDraft(doc.report_id as string)} disabled={loading}>Load Draft</button>
+                        ) : null}
+                        {doc.uri ? (
+                          <p>
+                            {doc.uri.startsWith("http") ? (
+                              <a href={doc.uri} target="_blank" rel="noreferrer">Open Evidence</a>
+                            ) : (
+                              doc.uri
+                            )}
+                          </p>
+                        ) : null}
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
             ))}
