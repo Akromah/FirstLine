@@ -344,6 +344,26 @@ type AIReportAssist = {
   confidence: number;
   tone: string;
 };
+type ReportAuditRecommendation = {
+  recommendation_id: string;
+  severity: "REQUIRED" | "RECOMMENDED";
+  category: string;
+  title: string;
+  detail: string;
+  suggested_text: string;
+  legal_reference?: string | null;
+};
+type ReportAuditResult = {
+  generated_at: string;
+  incident_id: string;
+  unit_id?: string | null;
+  crime_label?: string | null;
+  primary_code?: string | null;
+  recommendation_count: number;
+  required_count: number;
+  all_clear: boolean;
+  recommendations: ReportAuditRecommendation[];
+};
 
 type IncidentDetail = {
   incident: {
@@ -532,6 +552,9 @@ export default function App() {
   const [selectedTemplateId, setSelectedTemplateId] = useState("GENERAL_INCIDENT");
   const [reportTone, setReportTone] = useState("professional");
   const [reportAssist, setReportAssist] = useState<AIReportAssist | null>(null);
+  const [reportAudit, setReportAudit] = useState<ReportAuditResult | null>(null);
+  const [reportAuditLoading, setReportAuditLoading] = useState(false);
+  const [ignoredReportRecommendationIds, setIgnoredReportRecommendationIds] = useState<string[]>([]);
   const [reportEvidenceType, setReportEvidenceType] = useState("photo");
   const [reportEvidenceUri, setReportEvidenceUri] = useState("");
   const [reportEvidence, setReportEvidence] = useState<Array<{ type: string; uri: string; added_at?: string }>>([]);
@@ -572,6 +595,21 @@ export default function App() {
   const [aiAssist, setAiAssist] = useState<AIAssist | null>(null);
   const [safetyBriefing, setSafetyBriefing] = useState<AIBriefing | null>(null);
   const [aiDispositionDraft, setAiDispositionDraft] = useState<AIDispositionDraft | null>(null);
+  const visibleReportRecommendations = useMemo(
+    () =>
+      (reportAudit?.recommendations ?? []).filter(
+        (item) => !ignoredReportRecommendationIds.includes(item.recommendation_id)
+      ),
+    [reportAudit, ignoredReportRecommendationIds]
+  );
+  const visibleRequiredReportRecommendations = useMemo(
+    () => visibleReportRecommendations.filter((item) => item.severity === "REQUIRED"),
+    [visibleReportRecommendations]
+  );
+  const hiddenReportRecommendationCount = Math.max(
+    0,
+    (reportAudit?.recommendations.length ?? 0) - visibleReportRecommendations.length
+  );
 
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
@@ -941,6 +979,11 @@ export default function App() {
   }, [selectedIncident?.incident_id]);
 
   useEffect(() => {
+    setReportAudit(null);
+    setIgnoredReportRecommendationIds([]);
+  }, [selectedIncident?.incident_id, statusUnitId]);
+
+  useEffect(() => {
     if (!selectedIncident || !reportHub) {
       setReportEvidence([]);
       return;
@@ -1017,6 +1060,11 @@ export default function App() {
       void runCodeSearch(codeQuery, codeSort);
     }
   }, [activeModule]);
+
+  useEffect(() => {
+    if (activeModule !== "reportHub" || !selectedIncident) return;
+    void runReportAudit({ silent: true });
+  }, [activeModule, selectedIncident?.incident_id, statusUnitId]);
 
   useEffect(() => {
     async function loadReportReadiness() {
@@ -1468,6 +1516,71 @@ export default function App() {
       setLoading(false);
     }
   }
+
+  async function runReportAudit(options?: { narrative?: string; silent?: boolean }) {
+    if (!selectedIncident) return;
+    setReportAuditLoading(true);
+    try {
+      const payload = await fetchJson<ReportAuditResult>("/api/v1/reporting/audit", {
+        method: "POST",
+        body: JSON.stringify({
+          incident_id: selectedIncident.incident_id,
+          unit_id: statusUnitId || null,
+          narrative: options?.narrative ?? reportNarrative,
+          structured_fields: parseFields(reportFields),
+        }),
+      });
+      setReportAudit(payload);
+      setIgnoredReportRecommendationIds((prev) =>
+        prev.filter((id) => payload.recommendations.some((item) => item.recommendation_id === id))
+      );
+      if (!options?.silent) {
+        if (payload.all_clear) {
+          setReportSummary("AI Report QA: no missing statutory or policy elements detected.");
+        } else {
+          const recommendedCount = Math.max(0, payload.recommendation_count - payload.required_count);
+          setReportSummary(
+            `AI Report QA flagged ${payload.required_count} required and ${recommendedCount} recommended item(s).`
+          );
+        }
+      }
+    } catch (error) {
+      if (!options?.silent) {
+        setBanner(`AI report QA failed: ${(error as Error).message}`);
+      }
+    } finally {
+      setReportAuditLoading(false);
+    }
+  }
+
+  async function handleRunReportAudit() {
+    await runReportAudit();
+  }
+
+  function handleIgnoreReportRecommendation(recommendationId: string) {
+    setIgnoredReportRecommendationIds((prev) =>
+      prev.includes(recommendationId) ? prev : [...prev, recommendationId]
+    );
+  }
+
+  function handleInsertReportRecommendation(rec: ReportAuditRecommendation) {
+    const suggested = rec.suggested_text?.trim();
+    if (!suggested) return;
+    const current = reportNarrative.trimEnd();
+    const alreadyIncluded = current.toLowerCase().includes(suggested.toLowerCase());
+    const nextNarrative = alreadyIncluded ? current : `${current}${current ? "\n\n" : ""}${suggested}`;
+    setReportNarrative(nextNarrative);
+    setReportSummary(`Inserted recommendation: ${rec.title}`);
+    setIgnoredReportRecommendationIds((prev) =>
+      prev.includes(rec.recommendation_id) ? prev : [...prev, rec.recommendation_id]
+    );
+    void runReportAudit({ narrative: nextNarrative, silent: true });
+  }
+
+  function handleResetIgnoredRecommendations() {
+    setIgnoredReportRecommendationIds([]);
+  }
+
   async function handleSaveDraft() {
     if (!selectedIncident || !statusUnitId) return;
     setLoading(true);
@@ -1485,6 +1598,7 @@ export default function App() {
         }),
       });
       setReportSummary(`Draft ${draft.report_id} saved at ${draft.updated_at}.`);
+      await runReportAudit({ narrative: reportNarrative, silent: true });
       await refreshDashboard();
     } catch (error) {
       setBanner(`Draft save failed: ${(error as Error).message}`);
@@ -1630,6 +1744,7 @@ export default function App() {
       const merged = { ...payload.structured_fields, ...parseFields(reportFields) };
       setReportFields(serializeFields(merged));
       setReportSummary(`Applied template ${selectedTemplateId}.`);
+      await runReportAudit({ narrative: payload.narrative, silent: true });
     } catch (error) {
       setBanner(`Template apply failed: ${(error as Error).message}`);
     } finally {
@@ -1653,6 +1768,7 @@ export default function App() {
       setReportAssist(result);
       setReportNarrative(result.improved_narrative);
       setReportSummary(`AI report assist ${Math.round(result.confidence * 100)}% confidence.`);
+      await runReportAudit({ narrative: result.improved_narrative, silent: true });
     } catch (error) {
       setBanner(`AI report assist failed: ${(error as Error).message}`);
     } finally {
@@ -2599,6 +2715,9 @@ export default function App() {
               <button type="button" onClick={handleAiReportAssist} disabled={loading || !selectedIncident}>
                 AI Refine Narrative
               </button>
+              <button type="button" onClick={handleRunReportAudit} disabled={loading || reportAuditLoading || !selectedIncident}>
+                {reportAuditLoading ? "Running AI QA..." : "Run AI Report QA"}
+              </button>
             </div>
             <div className="button-grid">
               <button type="button" onClick={() => appendNarrativeBlock("Witness Statements")} disabled={loading}>Insert Witness Section</button>
@@ -2637,9 +2756,72 @@ export default function App() {
                 </div>
               ))}
             </div>
-            <div className="dispatch-form-grid">
-              <label className="form-field wide">Narrative Draft<textarea value={reportNarrative} onChange={(e) => setReportNarrative(e.target.value)} /></label>
-              <label className="form-field wide">Structured Fields (key=value;key2=value2)<input value={reportFields} onChange={(e) => setReportFields(e.target.value)} /></label>
+            <div className="report-editor-grid">
+              <div className="report-editor-main">
+                <div className="dispatch-form-grid">
+                  <label className="form-field wide">Narrative Draft<textarea value={reportNarrative} onChange={(e) => setReportNarrative(e.target.value)} /></label>
+                  <label className="form-field wide">Structured Fields (key=value;key2=value2)<input value={reportFields} onChange={(e) => setReportFields(e.target.value)} /></label>
+                </div>
+              </div>
+              <aside className="report-audit-panel">
+                <div className="report-audit-header">
+                  <h3>AI Report QA</h3>
+                  <span className="badge soft">
+                    {visibleRequiredReportRecommendations.length} Required
+                  </span>
+                </div>
+                <p className="report-audit-subtitle">Checks statutory elements, call facts, and policy-required content.</p>
+                {reportAudit ? (
+                  <div className="report-audit-summary">
+                    <span>{visibleReportRecommendations.length} visible recommendation(s)</span>
+                    {hiddenReportRecommendationCount > 0 ? <span>{hiddenReportRecommendationCount} ignored</span> : null}
+                    <button
+                      type="button"
+                      className="audit-link-btn"
+                      onClick={handleResetIgnoredRecommendations}
+                      disabled={hiddenReportRecommendationCount === 0}
+                    >
+                      Reset ignored
+                    </button>
+                  </div>
+                ) : (
+                  <div className="dispatch-banner">Run AI Report QA to review missing legal and policy details.</div>
+                )}
+                {reportAudit && visibleReportRecommendations.length === 0 ? (
+                  <div className="dispatch-banner success">All clear. No visible recommendations.</div>
+                ) : null}
+                <div className="report-audit-list">
+                  {visibleReportRecommendations.map((rec) => (
+                    <div
+                      key={rec.recommendation_id}
+                      className={`report-audit-item ${rec.severity === "REQUIRED" ? "required" : "recommended"}`}
+                    >
+                      <div className="report-audit-item-head">
+                        <strong>{rec.title}</strong>
+                        <span className={`badge soft ${rec.severity === "REQUIRED" ? "" : "ok"}`}>{rec.severity}</span>
+                      </div>
+                      <p>{rec.detail}</p>
+                      {rec.legal_reference ? <p className="report-audit-legal">Ref: {rec.legal_reference}</p> : null}
+                      <div className="report-audit-actions">
+                        <button
+                          type="button"
+                          onClick={() => handleInsertReportRecommendation(rec)}
+                          disabled={loading || reportAuditLoading}
+                        >
+                          Insert
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleIgnoreReportRecommendation(rec.recommendation_id)}
+                          disabled={loading || reportAuditLoading}
+                        >
+                          Ignore
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </aside>
             </div>
             <div className="button-grid">
               <button type="button" onClick={handleSaveDraft} disabled={loading}>Save Draft</button>

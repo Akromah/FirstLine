@@ -1,9 +1,11 @@
 from datetime import datetime, timezone
+import re
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from app.core.state import state
+from app.modules.intel.reference_data import CALIFORNIA_CODE_INDEX
 
 
 TEMPLATE_LIBRARY: list[dict[str, Any]] = [
@@ -85,12 +87,63 @@ class ReportReviewRequest(BaseModel):
     notes: str | None = None
 
 
+class ReportAuditRequest(BaseModel):
+    incident_id: str
+    unit_id: str | None = None
+    narrative: str
+    structured_fields: dict[str, str] = Field(default_factory=dict)
+
+
 def _find_template(template_id: str) -> dict[str, Any]:
     normalized = template_id.strip().upper()
     for item in TEMPLATE_LIBRARY:
         if item["template_id"] == normalized:
             return item
     return next(item for item in TEMPLATE_LIBRARY if item["template_id"] == "GENERAL_INCIDENT")
+
+
+def _normalize_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value.lower()).strip()
+
+
+def _contains_any(text: str, phrases: list[str]) -> bool:
+    return any(phrase in text for phrase in phrases)
+
+
+def _normalize_code_key(primary_code: str | None) -> str:
+    if not primary_code:
+        return ""
+    return primary_code.strip().upper().replace(" ", "-")
+
+
+def _lookup_code_entry(primary_code: str | None) -> dict | None:
+    normalized = _normalize_code_key(primary_code)
+    if not normalized:
+        return None
+    for entry in CALIFORNIA_CODE_INDEX:
+        if entry.get("code_key", "").upper() == normalized:
+            return entry
+    return None
+
+
+def _build_recommendation(
+    recommendation_id: str,
+    severity: str,
+    category: str,
+    title: str,
+    detail: str,
+    suggested_text: str,
+    legal_reference: str | None = None,
+) -> dict:
+    return {
+        "recommendation_id": recommendation_id,
+        "severity": severity,
+        "category": category,
+        "title": title,
+        "detail": detail,
+        "suggested_text": suggested_text,
+        "legal_reference": legal_reference,
+    }
 
 
 def get_report_templates(incident_id: str | None = None) -> dict:
@@ -391,4 +444,143 @@ def get_incident_reporting_readiness(incident_id: str, unit_id: str | None = Non
         "review_complete": review_complete,
         "blockers": blockers,
         "ready_for_submission": len(blockers) == 0,
+    }
+
+
+def generate_report_audit(payload: ReportAuditRequest) -> dict | None:
+    incident = state.get_incident(payload.incident_id)
+    if not incident:
+        return None
+
+    narrative = _normalize_text(payload.narrative)
+    call_text = _normalize_text(incident.get("call_text") or "")
+    call_type = _normalize_text(incident.get("call_type") or "")
+    code = incident.get("primary_code")
+    code_entry = _lookup_code_entry(code)
+    crime_label = incident.get("crime_label") or incident.get("call_type") or "Incident"
+
+    recommendations: list[dict] = []
+    seen_ids: set[str] = set()
+
+    def add_recommendation(entry: dict) -> None:
+        rec_id = entry["recommendation_id"]
+        if rec_id in seen_ids:
+            return
+        seen_ids.add(rec_id)
+        recommendations.append(entry)
+
+    if not _contains_any(narrative, ["upon arrival", "on scene", "arrived", "scene was", "initially observed"]):
+        add_recommendation(
+            _build_recommendation(
+                recommendation_id="scene-arrival",
+                severity="REQUIRED",
+                category="Scene Narrative",
+                title="Describe scene on arrival",
+                detail="Report should document what officers observed immediately on arrival.",
+                suggested_text="Upon arrival, officers observed the scene condition, involved parties, and immediate safety risks.",
+            )
+        )
+
+    if call_text and not _contains_any(narrative, ["caller reported", "dispatch advised", "cad notes", "reported that"]):
+        add_recommendation(
+            _build_recommendation(
+                recommendation_id="call-facts",
+                severity="RECOMMENDED",
+                category="Call Intake Facts",
+                title="Reference key dispatch details",
+                detail="Include relevant facts from intake/caller statements so the report aligns with CAD.",
+                suggested_text=f"Dispatch advised: {incident.get('call_text')}",
+            )
+        )
+
+    domestic_call = ("domestic" in call_type) or (str(code or "").upper().startswith("PC 273.5"))
+    if domestic_call:
+        if not _contains_any(narrative, ["separat", "separate", "kept apart", "independent statements"]):
+            add_recommendation(
+                _build_recommendation(
+                    recommendation_id="dv-separation",
+                    severity="REQUIRED",
+                    category="Domestic Violence Protocol",
+                    title="Document party separation",
+                    detail="DV reports should document that parties were separated for independent statements and safety.",
+                    suggested_text="Officers separated all involved parties to prevent further escalation and obtain independent statements.",
+                    legal_reference="Policy 3.120",
+                )
+            )
+        if not _contains_any(narrative, ["marcy", "victim rights card", "victim rights information", "marsy's"]):
+            add_recommendation(
+                _build_recommendation(
+                    recommendation_id="dv-marcy-card",
+                    severity="REQUIRED",
+                    category="Domestic Violence Protocol",
+                    title="Document Marcy's Card / victim rights advisement",
+                    detail="DV reports should record victim-rights advisement and card issuance.",
+                    suggested_text="Victim was provided Marcy's Card and advised of victim rights and available advocacy resources.",
+                    legal_reference="Policy 3.120",
+                )
+            )
+
+    if str(code or "").upper().startswith("PC 211") or "robbery" in call_type:
+        if not _contains_any(narrative, ["force", "fear", "threat", "intimidat", "weapon"]):
+            add_recommendation(
+                _build_recommendation(
+                    recommendation_id="robbery-force-fear",
+                    severity="REQUIRED",
+                    category="Crime Elements",
+                    title="Articulate force or fear",
+                    detail="Robbery requires force or fear; report should clearly articulate how force/fear was applied.",
+                    suggested_text="Suspect used force/fear by threatening the victim, causing the victim to relinquish property.",
+                    legal_reference="PC 211",
+                )
+            )
+
+    if code_entry and code_entry.get("elements"):
+        legal_reference = f"{code_entry['code_family']} {code_entry['section']}"
+        for idx, element in enumerate(code_entry["elements"]):
+            keywords = [token.lower() for token in element.get("keywords", [])]
+            if keywords and _contains_any(narrative, keywords):
+                continue
+            add_recommendation(
+                _build_recommendation(
+                    recommendation_id=f"statute-{legal_reference.replace(' ', '-').lower()}-{idx}",
+                    severity="REQUIRED",
+                    category="Statutory Elements",
+                    title=f"Address element: {element.get('label', 'Required element')}",
+                    detail=f"Include facts supporting this element for {legal_reference} ({code_entry['title']}).",
+                    suggested_text=f"Element addressed: {element.get('label', 'Required statutory element')} based on officer observations and statements.",
+                    legal_reference=legal_reference,
+                )
+            )
+
+    call_fact_markers = {
+        "weapon": ["weapon", "gun", "knife", "firearm"],
+        "injury": ["injury", "bleeding", "pain", "bruise", "swelling"],
+        "children": ["child", "juvenile", "minor"],
+    }
+    for marker, terms in call_fact_markers.items():
+        if _contains_any(call_text, terms) and not _contains_any(narrative, terms):
+            add_recommendation(
+                _build_recommendation(
+                    recommendation_id=f"call-marker-{marker}",
+                    severity="RECOMMENDED",
+                    category="Call Intake Facts",
+                    title=f"Reference reported {marker}",
+                    detail=f"Caller reported {marker}-related details; include findings or disposition of that detail.",
+                    suggested_text=f"Officers investigated reported {marker} details and documented findings.",
+                )
+            )
+
+    recommendations.sort(key=lambda item: (0 if item["severity"] == "REQUIRED" else 1, item["category"], item["title"]))
+    required_count = len([item for item in recommendations if item["severity"] == "REQUIRED"])
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "incident_id": payload.incident_id,
+        "unit_id": payload.unit_id,
+        "crime_label": crime_label,
+        "primary_code": code,
+        "recommendation_count": len(recommendations),
+        "required_count": required_count,
+        "all_clear": len(recommendations) == 0,
+        "recommendations": recommendations,
     }

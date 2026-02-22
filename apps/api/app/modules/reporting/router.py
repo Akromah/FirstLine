@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
 from app.modules.reporting.service import (
+    ReportAuditRequest,
     ReportCreateRequest,
     ReportDraftRequest,
     ReportEvidenceRequest,
@@ -15,6 +16,7 @@ from app.modules.reporting.service import (
     get_reporting_metrics,
     get_report_templates,
     get_supervisor_review_queue,
+    generate_report_audit,
     review_report,
     save_report_draft,
 )
@@ -89,3 +91,11 @@ def incident_reporting_readiness(incident_id: str, unit_id: str | None = None) -
     if not readiness:
         raise HTTPException(status_code=404, detail="Incident not found")
     return readiness
+
+
+@router.post("/audit")
+def audit_report(payload: ReportAuditRequest) -> dict:
+    response = generate_report_audit(payload)
+    if not response:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return response

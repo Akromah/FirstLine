@@ -245,6 +245,21 @@ def test_intake_dispatch_reporting_flow() -> None:
     assert evidence_response.status_code == 200
     assert len(evidence_response.json()["evidence_links"]) >= 1
 
+    report_audit_response = client.post(
+        "/api/v1/reporting/audit",
+        json={
+            "incident_id": incident_id,
+            "unit_id": assignment_payload["recommended_unit_id"],
+            "narrative": "Parties contacted on scene.",
+            "structured_fields": {"case_type": "Domestic"},
+        },
+    )
+    assert report_audit_response.status_code == 200
+    report_audit_payload = report_audit_response.json()
+    assert report_audit_payload["recommendation_count"] >= 1
+    assert any(rec["recommendation_id"] == "dv-separation" for rec in report_audit_payload["recommendations"])
+    assert any(rec["recommendation_id"] == "dv-marcy-card" for rec in report_audit_payload["recommendations"])
+
     readiness_before_disposition = client.get(
         f"/api/v1/reporting/readiness/{incident_id}",
         params={"unit_id": assignment_payload["recommended_unit_id"]},
@@ -502,6 +517,19 @@ def test_intake_dispatch_reporting_flow() -> None:
     code_detail_response = client.get("/api/v1/intel/code/PC-211")
     assert code_detail_response.status_code == 200
     assert code_detail_response.json()["title"] == "Robbery"
+
+    robbery_audit_response = client.post(
+        "/api/v1/reporting/audit",
+        json={
+            "incident_id": robbery_incident_id,
+            "unit_id": robbery_assign_response.json()["recommended_unit_id"],
+            "narrative": "Officers contacted suspect and victim and gathered statements.",
+            "structured_fields": {"case_type": "Robbery"},
+        },
+    )
+    assert robbery_audit_response.status_code == 200
+    robbery_audit_payload = robbery_audit_response.json()
+    assert any(rec["recommendation_id"] == "robbery-force-fear" for rec in robbery_audit_payload["recommendations"])
 
     live_start_response = client.post(
         "/api/v1/intake/patrol-sim/start",

@@ -1053,6 +1053,142 @@ body {
   margin-bottom: 8px;
 }
 
+.report-editor-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.report-editor-main {
+  min-width: 0;
+}
+
+.report-audit-panel {
+  border: 1px solid #28496f;
+  border-radius: 10px;
+  background: #102038;
+  padding: 10px;
+}
+
+.report-audit-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.report-audit-header h3 {
+  margin: 0;
+  font-size: 13px;
+  color: #e8f2ff;
+}
+
+.report-audit-subtitle {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #b7cbed;
+}
+
+.report-audit-summary {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: #d2e2fb;
+}
+
+.audit-link-btn {
+  border: 1px solid #3d6297;
+  border-radius: 8px;
+  background: #152b48;
+  color: #d9e9ff;
+  font-size: 11px;
+  min-height: 30px;
+  padding: 0 10px;
+  cursor: pointer;
+}
+
+.audit-link-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.report-audit-list {
+  margin-top: 8px;
+  display: grid;
+  gap: 8px;
+  max-height: 430px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.report-audit-item {
+  border: 1px solid #2e4d77;
+  border-radius: 10px;
+  background: #122540;
+  padding: 9px;
+}
+
+.report-audit-item.required {
+  border-color: #816343;
+  background: #2a2318;
+}
+
+.report-audit-item.recommended {
+  border-color: #2d507b;
+  background: #13263f;
+}
+
+.report-audit-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.report-audit-item-head strong {
+  color: #ecf5ff;
+  font-size: 12px;
+}
+
+.report-audit-item p {
+  margin: 6px 0 0;
+  color: #bed0ea;
+  font-size: 12px;
+}
+
+.report-audit-legal {
+  font-weight: 700;
+  color: #d7e7ff;
+}
+
+.report-audit-actions {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.report-audit-actions button {
+  border: 1px solid #365a8c;
+  border-radius: 9px;
+  background: linear-gradient(180deg, #1b3254 0%, #132742 100%);
+  color: #e7f0ff;
+  min-height: 34px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.report-audit-actions button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 @media (max-width: 1200px) {
   .layout {
     grid-template-columns: 1fr;
@@ -1124,6 +1260,10 @@ body {
   }
 
   .readiness-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .report-editor-grid {
     grid-template-columns: 1fr;
   }
 }

@@ -38,6 +38,13 @@ CALIFORNIA_CODE_INDEX: list[dict] = [
         "summary": "Taking property from person or immediate presence by force or fear.",
         "aliases": ["strong arm robbery", "strong-armed", "strong armed"],
         "keywords": ["force", "fear", "stickup", "forcible theft"],
+        "elements": [
+            {"id": "taking", "label": "Property was taken", "keywords": ["took", "taken", "removed", "stole", "grabbed"]},
+            {"id": "from_person", "label": "From person or immediate presence", "keywords": ["from victim", "from clerk", "immediate presence", "within reach"]},
+            {"id": "against_will", "label": "Against victim's will", "keywords": ["without consent", "against will", "refused", "did not consent"]},
+            {"id": "force_or_fear", "label": "By force or fear", "keywords": ["force", "fear", "threat", "intimidated", "weapon displayed"]},
+            {"id": "intent", "label": "Intent to permanently deprive", "keywords": ["intent to steal", "permanently deprive", "fled with property"]},
+        ],
     },
     {
         "code_key": "PC-215",
@@ -88,6 +95,11 @@ CALIFORNIA_CODE_INDEX: list[dict] = [
         "summary": "Willfully inflicting corporal injury causing traumatic condition on protected person.",
         "aliases": ["domestic violence felony"],
         "keywords": ["domestic violence", "intimate partner", "traumatic condition"],
+        "elements": [
+            {"id": "protected_relationship", "label": "Protected domestic relationship", "keywords": ["spouse", "cohabitant", "dating partner", "former spouse"]},
+            {"id": "willful_force", "label": "Willful use of force", "keywords": ["willfully", "struck", "hit", "punched", "grabbed"]},
+            {"id": "traumatic_condition", "label": "Traumatic condition or injury", "keywords": ["injury", "bruise", "redness", "swelling", "pain", "traumatic condition"]},
+        ],
     },
     {
         "code_key": "PC-422",
@@ -108,6 +120,11 @@ CALIFORNIA_CODE_INDEX: list[dict] = [
         "summary": "Entry into structure or locked vehicle with intent to steal or commit felony.",
         "aliases": ["break in", "b and e"],
         "keywords": ["forced entry", "entered with intent", "home break in"],
+        "elements": [
+            {"id": "entry", "label": "Entry occurred", "keywords": ["entered", "entry", "inside", "went into"]},
+            {"id": "target_structure", "label": "Qualifying structure or locked vehicle", "keywords": ["residence", "business", "store", "apartment", "locked vehicle"]},
+            {"id": "intent_at_entry", "label": "Intent to steal or commit felony at time of entry", "keywords": ["intent to steal", "intent at entry", "planned theft", "felonious intent"]},
+        ],
     },
     {
         "code_key": "PC-484",
