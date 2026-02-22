@@ -8,6 +8,21 @@ Python-first scaffolding for a modern CAD platform focused on:
 - Mobile Officer App
 - Command Dashboard
 
+## Current Product Highlights
+
+- Smart intake with AI-assisted call typing, priority scoring, duplicate detection, and one-click demo scenario seeding.
+- Map-first operations with live unit and incident overlays, geofence/traffic context, and layer toggles.
+- Recommendation engine with proximity/skill/workload/fatigue scoring and fatigue guardrail assignment logic.
+- Mobile officer workflow with one-tap status updates, assigned call deck, secure messaging, and incident channels.
+- Integrated reporting hub with templates, dictation support, autosave, AI narrative refinement, evidence linkage, and RMS payload export.
+- Supervisor workflow with report review queue, approve/request-changes actions, and review notes.
+- Command analytics including operational trend snapshots, unit readiness board, and reporting pipeline KPIs.
+- Intelligence hub with records, warrants, firearms lookup, and officer safety profile context.
+
+## Investor Demo Assets
+
+- `docs/INVESTOR_DEMO_PLAYBOOK.md` step-by-step live demo flow and talk track.
+
 ## Structure
 
 - `apps/api` FastAPI modular backend
