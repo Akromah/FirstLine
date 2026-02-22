@@ -188,6 +188,7 @@ type IncidentDetail = {
 };
 type ViewMode = "Dispatch" | "Field" | "Report" | "Intel";
 type ModulePanel =
+  | "mapOnly"
   | "intake"
   | "queue"
   | "priorityRadar"
@@ -1466,6 +1467,7 @@ export default function App() {
     unitReadiness: unitBoard?.break_recommendations.length,
   };
   const moduleButtons: Array<{ id: ModulePanel; label: string; icon: string; visible: boolean; badge?: number }> = [
+    { id: "mapOnly", label: "Map Only", icon: "MAP", visible: true },
     { id: "intake", label: "Intake", icon: "911", visible: showDispatch },
     { id: "queue", label: "Active Queue", icon: "Q", visible: showDispatch || showField || showReport, badge: moduleCounts.queue },
     { id: "priorityRadar", label: "Priority Radar", icon: "R", visible: showDispatch || showField, badge: moduleCounts.priorityRadar },
@@ -1599,6 +1601,7 @@ export default function App() {
       </header>
 
       <div className="chip-row">
+        {activeModule === "mapOnly" ? <span className="chip ok">Map-only workspace active</span> : null}
         <span className="chip">Traffic: {mapData?.traffic_overlay ?? "n/a"}</span>
         <span className="chip">Hot zones: {mapData?.hot_zones.length ?? 0}</span>
         <span className="chip">Geofence alerts: {mapData?.geofenced_alerts.filter((item: any) => item.active).length ?? 0}</span>
