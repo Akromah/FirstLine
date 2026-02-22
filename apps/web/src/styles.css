@@ -326,6 +326,12 @@ body {
   flex-direction: column;
 }
 
+.map-card.map-focus-mode {
+  position: fixed;
+  inset: 86px 14px 14px 14px;
+  z-index: 1500;
+}
+
 .map-header h2 {
   margin: 0;
 }
@@ -344,6 +350,11 @@ body {
   height: 500px;
   overflow: hidden;
   background: #edf3fb;
+}
+
+.map-card.map-focus-mode .map-canvas {
+  min-height: calc(100vh - 180px);
+  height: calc(100vh - 180px);
 }
 
 .maplibre-map {

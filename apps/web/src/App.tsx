@@ -243,6 +243,7 @@ export default function App() {
   const [riskProfile, setRiskProfile] = useState<any>(null);
   const [showMapUnits, setShowMapUnits] = useState(true);
   const [showMapIncidents, setShowMapIncidents] = useState(true);
+  const [mapFocusMode, setMapFocusMode] = useState(false);
 
   const [statusUnitId, setStatusUnitId] = useState("u-201");
   const [statusValue, setStatusValue] = useState("AVAILABLE");
@@ -731,6 +732,14 @@ export default function App() {
     window.addEventListener("keydown", onGlobalKeyDown);
     return () => window.removeEventListener("keydown", onGlobalKeyDown);
   }, [started]);
+
+  useEffect(() => {
+    function onEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setMapFocusMode(false);
+    }
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, []);
 
   async function handleCreateCall(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1336,11 +1345,14 @@ export default function App() {
           </article>
           ) : null}
 
-          <article className="card map-card">
+          <article className={`card map-card ${mapFocusMode ? "map-focus-mode" : ""}`.trim()}>
             <div className="map-header"><h2>Unified Live Map</h2><p>Live unit status and incident priority overlays.</p></div>
             <div className="toggle-row">
               <label><input type="checkbox" checked={showMapUnits} onChange={(e) => setShowMapUnits(e.target.checked)} /> Units</label>
               <label><input type="checkbox" checked={showMapIncidents} onChange={(e) => setShowMapIncidents(e.target.checked)} /> Incidents</label>
+              <button type="button" className="dispatch-secondary" onClick={() => setMapFocusMode((prev) => !prev)}>
+                {mapFocusMode ? "Exit Map Focus" : "Map Focus"}
+              </button>
               <button
                 type="button"
                 className="dispatch-secondary"
