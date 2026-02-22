@@ -117,3 +117,51 @@ def incident_channel(incident_id: str, limit: int = 40) -> dict:
         "message_count": len(messages),
         "messages": messages,
     }
+
+
+def quick_actions(incident_id: str, unit_id: str | None = None) -> dict | None:
+    incident = state.get_incident(incident_id)
+    if not incident:
+        return None
+
+    status = incident.get("status", "NEW")
+    has_disposition = bool(incident.get("disposition"))
+    assigned_unit_id = incident.get("assigned_unit_id")
+
+    actions = [
+        {"action": "ACCEPT", "label": "Accept", "enabled": False, "reason": "Already accepted."},
+        {"action": "EN_ROUTE", "label": "En Route", "enabled": False, "reason": "Not available in current status."},
+        {"action": "ON_SCENE", "label": "On Scene", "enabled": False, "reason": "Not available in current status."},
+        {"action": "CLEAR", "label": "Clear", "enabled": False, "reason": "Not available in current status."},
+    ]
+
+    if status in {"NEW", "DISPATCHED"}:
+        actions[0]["enabled"] = True
+        actions[0]["reason"] = "Available"
+        actions[1]["enabled"] = True
+        actions[1]["reason"] = "Available"
+    if status == "EN_ROUTE":
+        actions[2]["enabled"] = True
+        actions[2]["reason"] = "Available"
+    if status in {"ON_SCENE", "TRANSPORT"}:
+        actions[3]["enabled"] = has_disposition
+        actions[3]["reason"] = "Available" if has_disposition else "Finalize disposition first."
+    if status == "CLOSED":
+        for item in actions:
+            item["enabled"] = False
+            item["reason"] = "Incident already closed."
+
+    if unit_id and assigned_unit_id and unit_id != assigned_unit_id:
+        for item in actions:
+            item["enabled"] = False
+            item["reason"] = f"Assigned to {assigned_unit_id}."
+
+    return {
+        "incident_id": incident_id,
+        "unit_id": unit_id,
+        "incident_status": status,
+        "assigned_unit_id": assigned_unit_id,
+        "has_disposition": has_disposition,
+        "actions": actions,
+        "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }

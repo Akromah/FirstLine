@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from app.modules.officer.service import (
     OfficerAction,
@@ -8,6 +8,7 @@ from app.modules.officer.service import (
     incident_channel,
     message_inbox,
     post_message,
+    quick_actions,
     submit_action,
     update_status,
 )
@@ -43,3 +44,11 @@ def officer_message_inbox(unit_id: str, limit: int = 40) -> dict:
 @router.get("/channel/{incident_id}")
 def incident_message_channel(incident_id: str, limit: int = 60) -> dict:
     return incident_channel(incident_id, limit=limit)
+
+
+@router.get("/quick-actions/{incident_id}")
+def officer_quick_actions(incident_id: str, unit_id: str | None = None) -> dict:
+    response = quick_actions(incident_id, unit_id=unit_id)
+    if not response:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return response

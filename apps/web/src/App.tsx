@@ -145,6 +145,14 @@ type OfficerFeed = {
     history_at_address: string[];
   }>;
 };
+type QuickActionsPolicy = {
+  incident_id: string;
+  unit_id?: string | null;
+  incident_status: string;
+  assigned_unit_id?: string | null;
+  has_disposition: boolean;
+  actions: Array<{ action: string; label: string; enabled: boolean; reason: string }>;
+};
 type CommandTrends = {
   periods: number;
   metrics: {
@@ -257,6 +265,7 @@ export default function App() {
   const [reviewQueue, setReviewQueue] = useState<ReviewQueue | null>(null);
   const [incidentDetail, setIncidentDetail] = useState<IncidentDetail | null>(null);
   const [reportReadiness, setReportReadiness] = useState<ReportReadiness | null>(null);
+  const [quickActionsPolicy, setQuickActionsPolicy] = useState<QuickActionsPolicy | null>(null);
 
   const [selectedIncidentId, setSelectedIncidentId] = useState("");
   const [queueStatusFilter, setQueueStatusFilter] = useState("ALL");
@@ -604,6 +613,29 @@ export default function App() {
     }
     loadDetail();
   }, [selectedIncident?.incident_id, queue.length]);
+
+  useEffect(() => {
+    async function loadQuickActions() {
+      if (!selectedIncident) {
+        setQuickActionsPolicy(null);
+        return;
+      }
+      try {
+        const policy = await fetchJson<QuickActionsPolicy>(
+          `/api/v1/officer/quick-actions/${selectedIncident.incident_id}?unit_id=${statusUnitId}`
+        );
+        setQuickActionsPolicy(policy);
+      } catch {
+        setQuickActionsPolicy(null);
+      }
+    }
+    loadQuickActions();
+  }, [
+    selectedIncident?.incident_id,
+    statusUnitId,
+    incidentDetail?.incident?.status,
+    reportReadiness?.has_disposition ? "ready" : "pending",
+  ]);
 
   useEffect(() => {
     async function loadTemplates() {
@@ -1383,6 +1415,15 @@ export default function App() {
   const showField = viewMode === "Field";
   const showReport = viewMode === "Report";
   const showIntel = viewMode === "Intel";
+  const quickActionLookup = useMemo(() => {
+    const lookup: Record<string, { enabled: boolean; reason: string }> = {};
+    (quickActionsPolicy?.actions ?? []).forEach((item) => {
+      lookup[item.action] = { enabled: item.enabled, reason: item.reason };
+    });
+    return lookup;
+  }, [quickActionsPolicy]);
+  const isActionEnabled = (action: string) => quickActionLookup[action]?.enabled ?? true;
+  const actionReason = (action: string) => quickActionLookup[action]?.reason ?? "";
   const selectedAssignedUnit = useMemo(() => {
     const unitId = incidentDetail?.incident?.assigned_unit_id;
     if (!unitId) return null;
@@ -1640,7 +1681,14 @@ export default function App() {
                   <div className="map-hud-actions">
                     <button type="button" onClick={() => handleRecommend()} disabled={loading}>Recommend</button>
                     <button type="button" onClick={() => handleAssign()} disabled={loading}>Dispatch</button>
-                    <button type="button" onClick={() => handleQuickCode("ON_SCENE")} disabled={loading}>On Scene</button>
+                    <button
+                      type="button"
+                      title={actionReason("ON_SCENE")}
+                      onClick={() => handleQuickCode("ON_SCENE")}
+                      disabled={loading || !isActionEnabled("ON_SCENE")}
+                    >
+                      On Scene
+                    </button>
                     <button type="button" onClick={() => setActiveModule("disposition")} disabled={loading}>Disposition</button>
                   </div>
                 </div>
@@ -2064,7 +2112,12 @@ export default function App() {
               <button type="button" onClick={() => setActiveModule("reportHub")} disabled={loading}>
                 Open Report Hub
               </button>
-              <button type="button" onClick={() => handleOfficerAction("CLEAR")} disabled={loading || !reportReadiness?.has_disposition}>
+              <button
+                type="button"
+                title={actionReason("CLEAR")}
+                onClick={() => handleOfficerAction("CLEAR")}
+                disabled={loading || !isActionEnabled("CLEAR")}
+              >
                 Clear Incident
               </button>
             </div>
@@ -2081,11 +2134,40 @@ export default function App() {
             </div>
             <div className="dev-actions"><button type="button" onClick={handleStatusUpdate} disabled={loading}>Push Status Update</button></div>
             <div className="call-actions">
-              <button type="button" onClick={() => handleOfficerAction("ACCEPT")} disabled={loading}>Accept</button>
-              <button type="button" onClick={() => handleOfficerAction("ARRIVED")} disabled={loading}>Arrived</button>
-              <button type="button" onClick={() => handleOfficerAction("ON_SCENE")} disabled={loading}>On Scene</button>
-              <button type="button" onClick={() => handleOfficerAction("CLEAR")} disabled={loading}>Clear Call</button>
+              <button
+                type="button"
+                title={actionReason("ACCEPT")}
+                onClick={() => handleOfficerAction("ACCEPT")}
+                disabled={loading || !isActionEnabled("ACCEPT")}
+              >
+                Accept
+              </button>
+              <button
+                type="button"
+                title={actionReason("ON_SCENE")}
+                onClick={() => handleOfficerAction("ARRIVED")}
+                disabled={loading || !isActionEnabled("ON_SCENE")}
+              >
+                Arrived
+              </button>
+              <button
+                type="button"
+                title={actionReason("ON_SCENE")}
+                onClick={() => handleOfficerAction("ON_SCENE")}
+                disabled={loading || !isActionEnabled("ON_SCENE")}
+              >
+                On Scene
+              </button>
+              <button
+                type="button"
+                title={actionReason("CLEAR")}
+                onClick={() => handleOfficerAction("CLEAR")}
+                disabled={loading || !isActionEnabled("CLEAR")}
+              >
+                Clear Call
+              </button>
             </div>
+            {quickActionsPolicy ? <div className="dispatch-banner">Action policy: {quickActionsPolicy.incident_status} · {quickActionsPolicy.has_disposition ? "Disposition complete" : "Disposition pending"}</div> : null}
           </article>
           ) : null}
 

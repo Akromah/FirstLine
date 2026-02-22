@@ -87,6 +87,13 @@ def test_intake_dispatch_reporting_flow() -> None:
     assert officer_response.status_code == 200
     assert officer_response.json()["ok"] is True
 
+    quick_actions_before_disposition = client.get(
+        f"/api/v1/officer/quick-actions/{incident_id}",
+        params={"unit_id": assignment_payload["recommended_unit_id"]},
+    )
+    assert quick_actions_before_disposition.status_code == 200
+    assert quick_actions_before_disposition.json()["has_disposition"] is False
+
     clear_before_disposition = client.post(
         "/api/v1/officer/action",
         json={
@@ -321,6 +328,13 @@ def test_intake_dispatch_reporting_flow() -> None:
     )
     assert readiness_after_disposition.status_code == 200
     assert readiness_after_disposition.json()["has_disposition"] is True
+
+    quick_actions_after_disposition = client.get(
+        f"/api/v1/officer/quick-actions/{incident_id}",
+        params={"unit_id": assignment_payload["recommended_unit_id"]},
+    )
+    assert quick_actions_after_disposition.status_code == 200
+    assert quick_actions_after_disposition.json()["has_disposition"] is True
 
     queue_after_close = client.get("/api/v1/dispatch/queue")
     assert queue_after_close.status_code == 200
