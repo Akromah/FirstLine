@@ -545,6 +545,14 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   throw lastError ?? new Error("Request failed");
 }
 
+async function fetchJsonSafe<T>(path: string, init?: RequestInit): Promise<T | null> {
+  try {
+    return await fetchJson<T>(path, init);
+  } catch {
+    return null;
+  }
+}
+
 function parseSkills(raw: string): string[] {
   return raw.split(",").map((v) => v.trim()).filter(Boolean);
 }
@@ -836,20 +844,14 @@ export default function App() {
         setOfficerCallHistory(null);
         return;
       }
-      try {
-        const [inbox, feed, history] = await Promise.all([
-          fetchJson<MessageInbox>(`/api/v1/officer/messages/${statusUnitId}?limit=40`),
-          fetchJson<OfficerFeed>(`/api/v1/officer/feed/${statusUnitId}`),
-          fetchJson<OfficerCallHistory>(`/api/v1/officer/call-history/${statusUnitId}?limit=25`),
-        ]);
-        setMessageInbox(inbox);
-        setOfficerFeed(feed);
-        setOfficerCallHistory(history);
-      } catch {
-        setMessageInbox(null);
-        setOfficerFeed(null);
-        setOfficerCallHistory(null);
-      }
+      const [inbox, feed, history] = await Promise.all([
+        fetchJsonSafe<MessageInbox>(`/api/v1/officer/messages/${statusUnitId}?limit=40`),
+        fetchJsonSafe<OfficerFeed>(`/api/v1/officer/feed/${statusUnitId}`),
+        fetchJsonSafe<OfficerCallHistory>(`/api/v1/officer/call-history/${statusUnitId}?limit=25`),
+      ]);
+      setMessageInbox(inbox);
+      setOfficerFeed(feed);
+      setOfficerCallHistory(history);
     }
     loadOfficerPanels();
   }, [statusUnitId]);
@@ -892,58 +894,70 @@ export default function App() {
   }, [sessionRole]);
 
   async function refreshDashboard() {
-    try {
-      const feedPromise = statusUnitIdRef.current
-        ? fetchJson<OfficerFeed>(`/api/v1/officer/feed/${statusUnitIdRef.current}`).catch(() => null)
-        : Promise.resolve(null);
-      const inboxPromise = statusUnitIdRef.current
-        ? fetchJson<MessageInbox>(`/api/v1/officer/messages/${statusUnitIdRef.current}?limit=40`).catch(() => null)
-        : Promise.resolve(null);
-      const historyPromise = statusUnitIdRef.current
-        ? fetchJson<OfficerCallHistory>(`/api/v1/officer/call-history/${statusUnitIdRef.current}?limit=25`).catch(() => null)
-        : Promise.resolve(null);
-      const channelPromise = selectedIncidentIdRef.current
-        ? fetchJson<IncidentChannel>(`/api/v1/officer/channel/${selectedIncidentIdRef.current}?limit=10`).catch(() => null)
-        : Promise.resolve(null);
-      const [q, u, ub, ab, pb, c, ct, m, h, rm, rq, inbox, feed, history, channel] = await Promise.all([
-        fetchJson<{ incidents: IncidentSummary[] }>("/api/v1/dispatch/queue"),
-        fetchJson<{ units: UnitSummary[] }>("/api/v1/dispatch/units"),
-        fetchJson<UnitBoard>("/api/v1/dispatch/unit-board"),
-        fetchJson<UnitAvailabilityBoard>("/api/v1/dispatch/availability-board"),
-        fetchJson<PriorityRadar>("/api/v1/dispatch/priority-board?limit=6"),
-        fetchJson<any>("/api/v1/command/overview"),
-        fetchJson<CommandTrends>("/api/v1/command/trends?periods=6"),
-        fetchJson<MapOverview>("/api/v1/map/overview"),
-        fetchJson<ReportingHub>("/api/v1/reporting/hub"),
-        fetchJson<ReportingMetrics>("/api/v1/reporting/metrics"),
-        fetchJson<ReviewQueue>("/api/v1/reporting/review-queue"),
-        inboxPromise,
-        feedPromise,
-        historyPromise,
-        channelPromise,
-      ]);
+    const feedPromise = statusUnitIdRef.current
+      ? fetchJsonSafe<OfficerFeed>(`/api/v1/officer/feed/${statusUnitIdRef.current}`)
+      : Promise.resolve(null);
+    const inboxPromise = statusUnitIdRef.current
+      ? fetchJsonSafe<MessageInbox>(`/api/v1/officer/messages/${statusUnitIdRef.current}?limit=40`)
+      : Promise.resolve(null);
+    const historyPromise = statusUnitIdRef.current
+      ? fetchJsonSafe<OfficerCallHistory>(`/api/v1/officer/call-history/${statusUnitIdRef.current}?limit=25`)
+      : Promise.resolve(null);
+    const channelPromise = selectedIncidentIdRef.current
+      ? fetchJsonSafe<IncidentChannel>(`/api/v1/officer/channel/${selectedIncidentIdRef.current}?limit=10`)
+      : Promise.resolve(null);
+
+    const [q, u, ub, ab, pb, c, ct, m, h, rm, rq, inbox, feed, history, channel, patrol] = await Promise.all([
+      fetchJsonSafe<{ incidents: IncidentSummary[] }>("/api/v1/dispatch/queue"),
+      fetchJsonSafe<{ units: UnitSummary[] }>("/api/v1/dispatch/units"),
+      fetchJsonSafe<UnitBoard>("/api/v1/dispatch/unit-board"),
+      fetchJsonSafe<UnitAvailabilityBoard>("/api/v1/dispatch/availability-board"),
+      fetchJsonSafe<PriorityRadar>("/api/v1/dispatch/priority-board?limit=6"),
+      fetchJsonSafe<any>("/api/v1/command/overview"),
+      fetchJsonSafe<CommandTrends>("/api/v1/command/trends?periods=6"),
+      fetchJsonSafe<MapOverview>("/api/v1/map/overview"),
+      fetchJsonSafe<ReportingHub>("/api/v1/reporting/hub"),
+      fetchJsonSafe<ReportingMetrics>("/api/v1/reporting/metrics"),
+      fetchJsonSafe<ReviewQueue>("/api/v1/reporting/review-queue"),
+      inboxPromise,
+      feedPromise,
+      historyPromise,
+      channelPromise,
+      fetchJsonSafe<PatrolSimulationStatus>("/api/v1/intake/patrol-sim/status"),
+    ]);
+
+    if (q) {
       setQueue(q.incidents);
-      setUnits(u.units);
-      setUnitBoard(ub);
-      setAvailabilityBoard(ab);
-      setPriorityBoard(pb);
-      setCommand(c);
-      setCommandTrends(ct);
-      setMapData(m);
-      setPatrolStatus(m.patrol_simulation ?? null);
-      setReportHub(h);
-      setReportingMetrics(rm);
-      setReviewQueue(rq);
-      setMessageInbox(inbox);
-      setOfficerFeed(feed);
-      setOfficerCallHistory(history);
-      setIncidentChannel(channel);
       if (!selectedIncidentIdRef.current && q.incidents.length > 0) setSelectedIncidentId(q.incidents[0].incident_id);
+    }
+    if (u) {
+      setUnits(u.units);
       if (u.units.length > 0 && (!statusUnitIdRef.current || !u.units.some((item) => item.unit_id === statusUnitIdRef.current))) {
         setStatusUnitId(u.units[0].unit_id);
       }
-    } catch (error) {
-      setBanner(`API sync failed: ${(error as Error).message}`);
+    }
+    if (ub) setUnitBoard(ub);
+    if (ab) setAvailabilityBoard(ab);
+    if (pb) setPriorityBoard(pb);
+    if (c) setCommand(c);
+    if (ct) setCommandTrends(ct);
+    if (m) {
+      setMapData(m);
+      setPatrolStatus(m.patrol_simulation ?? patrol ?? null);
+    } else if (patrol) {
+      setPatrolStatus(patrol);
+    }
+    if (h) setReportHub(h);
+    if (rm) setReportingMetrics(rm);
+    if (rq) setReviewQueue(rq);
+    if (inbox !== null) setMessageInbox(inbox);
+    if (feed !== null) setOfficerFeed(feed);
+    if (history !== null) setOfficerCallHistory(history);
+    if (channel !== null) setIncidentChannel(channel);
+
+    const coreSyncOk = Boolean(q && u && (m || patrol));
+    if (!coreSyncOk) {
+      setBanner("API partial sync: one or more endpoints unavailable. Core updates will continue as available.");
     }
   }
   useEffect(() => {
@@ -2396,6 +2410,13 @@ export default function App() {
         .sort((a, b) => a.callsign.localeCompare(b.callsign)),
     [mapData?.units, units]
   );
+  const liveWorkflowRows = useMemo(
+    () =>
+      (availabilityBoard?.unavailable_units ?? [])
+        .filter((row) => Boolean(row.incident_id))
+        .slice(0, 12),
+    [availabilityBoard]
+  );
   const isDispatcher = sessionRole === "Dispatcher";
   const isOfficer = sessionRole === "Officer";
   const isSupervisor = sessionRole === "Supervisor";
@@ -2778,6 +2799,25 @@ export default function App() {
           </div>
           <div className="dispatch-banner">
             Call catalog: {patrolStatus?.call_types_loaded ?? 0} call types · {patrolStatus?.call_locations_loaded ?? 0} Redlands locations · Next call due {patrolStatus?.next_call_due_at ?? "pending"}
+          </div>
+          <div className="live-sim-workflow">
+            <h3>Dispatch Workflow (Commander Tracking)</h3>
+            <div className="timeline-list">
+              {liveWorkflowRows.map((row) => (
+                <div key={`${row.unit_id}-${row.incident_id}`} className="timeline-item">
+                  <strong>{row.incident_id} · {row.call_display || row.call_type}</strong>
+                  <p>
+                    {row.callsign} · {row.officer_name} · {row.incident_status}
+                  </p>
+                  <p>{row.current_location}</p>
+                </div>
+              ))}
+              {liveWorkflowRows.length === 0 ? (
+                <div className="dispatch-banner warn">
+                  No active dispatch workflows yet. Start simulation and refresh.
+                </div>
+              ) : null}
+            </div>
           </div>
           <div className="live-sim-roster">
             <h3>Officers On Shift</h3>

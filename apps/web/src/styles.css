@@ -168,6 +168,10 @@ body {
   margin: 12px 0 8px;
 }
 
+.live-sim-workflow h3 {
+  margin: 12px 0 8px;
+}
+
 .role-badge {
   border: 1px solid #ccd9ef;
   border-radius: 999px;
