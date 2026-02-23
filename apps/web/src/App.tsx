@@ -2674,20 +2674,20 @@ export default function App() {
 
       <section className="live-sim-strip">
         <button
-          className={`live-sim-cta ${liveSimPanelOpen ? "active" : ""}`}
-          type="button"
-          onClick={() => setLiveSimPanelOpen((prev) => !prev)}
-          disabled={loading}
-        >
-          {liveSimPanelOpen ? "Hide Live Simulation" : "Open Live Simulation"}
-        </button>
-        <button
-          className={`dispatch-secondary live-sim-toggle ${liveSimulationRunning ? "active" : ""}`}
+          className={`live-sim-cta ${liveSimulationRunning ? "active" : ""}`}
           type="button"
           onClick={handleToggleLiveSimulation}
           disabled={loading}
         >
-          {liveSimulationRunning ? "Stop Run" : "Start Run"}
+          {liveSimulationRunning ? "Stop Live Simulation" : "Start Live Simulation"}
+        </button>
+        <button
+          className={`dispatch-secondary live-sim-toggle ${liveSimPanelOpen ? "active" : ""}`}
+          type="button"
+          onClick={() => setLiveSimPanelOpen((prev) => !prev)}
+          disabled={loading}
+        >
+          {liveSimPanelOpen ? "Hide Console" : "Open Console"}
         </button>
         <div className="live-sim-meta">
           <strong>{liveSimulationRunning ? "LIVE DEV RUNNING" : "Simulation Offline"}</strong>
