@@ -93,6 +93,7 @@ class InMemoryState:
         self._patrol_simulation: dict = {
             "enabled": False,
             "profile": "OFF",
+            "started_at": None,
             "tick_seconds": 12,
             "last_tick": None,
             "last_call": None,
@@ -258,6 +259,7 @@ class InMemoryState:
             self._patrol_simulation = {
                 "enabled": False,
                 "profile": "OFF",
+                "started_at": None,
                 "tick_seconds": 12,
                 "last_tick": None,
                 "last_call": None,
@@ -294,6 +296,7 @@ class InMemoryState:
             self._patrol_simulation["tick_seconds"] = max(5, tick_seconds)
             if enabled:
                 self._sim_tick = 0
+                self._patrol_simulation["started_at"] = utc_now_iso()
                 self._patrol_simulation["last_tick"] = None
                 self._patrol_simulation["last_call"] = None
                 self._patrol_simulation["calls_generated"] = 0
@@ -301,6 +304,7 @@ class InMemoryState:
                 self._patrol_simulation["calls_resolved"] = 0
                 self._patrol_simulation["next_call_due_at"] = None
             else:
+                self._patrol_simulation["started_at"] = None
                 self._patrol_simulation["last_tick"] = utc_now_iso()
                 self._patrol_simulation["last_call"] = None
                 self._patrol_simulation["next_call_due_at"] = None

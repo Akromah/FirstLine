@@ -105,6 +105,29 @@ body {
   font-size: 12px;
 }
 
+.sim-notice {
+  margin-top: 8px;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  border: 1px solid #35547d;
+  background: #132843;
+  color: #d6e8ff;
+}
+
+.sim-notice.success {
+  border-color: #2fbc67;
+  background: rgba(47, 188, 103, 0.22);
+  color: #ddffe9;
+}
+
+.sim-notice.error {
+  border-color: #de4f63;
+  background: rgba(222, 79, 99, 0.2);
+  color: #ffe2e7;
+}
+
 .live-sim-toggle.active {
   border-color: #2fbc67;
   background: linear-gradient(180deg, #2fbc67 0%, #228b4c 100%);

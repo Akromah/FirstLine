@@ -89,6 +89,7 @@ type BeatOverlay = {
 type PatrolSimulationStatus = {
   enabled: boolean;
   profile: string;
+  started_at?: string | null;
   tick_seconds: number;
   last_tick?: string | null;
   last_call?: string | null;
@@ -570,6 +571,16 @@ function signed(value: number, suffix = ""): string {
   return `${value >= 0 ? "+" : ""}${value}${suffix}`;
 }
 
+function formatDuration(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const hrs = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  if (hrs > 0) return `${hrs}h ${mins}m ${secs}s`;
+  if (mins > 0) return `${mins}m ${secs}s`;
+  return `${secs}s`;
+}
+
 function incidentDispatchLabel(incident: IncidentSummary | null | undefined): string {
   if (!incident) return "Unknown";
   const code = (incident.primary_code ?? "").trim();
@@ -602,6 +613,9 @@ export default function App() {
   const [commandPaletteQuery, setCommandPaletteQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [banner, setBanner] = useState("Console initialized.");
+  const [liveSimBusy, setLiveSimBusy] = useState(false);
+  const [simNotice, setSimNotice] = useState<{ text: string; level: "success" | "error" | "info" } | null>(null);
+  const [simClockNowMs, setSimClockNowMs] = useState(() => Date.now());
 
   const [queue, setQueue] = useState<IncidentSummary[]>([]);
   const [units, setUnits] = useState<UnitSummary[]>([]);
@@ -750,6 +764,7 @@ export default function App() {
   const dictationRef = useRef<any>(null);
   const dictationStartRef = useRef<number | null>(null);
   const commandPaletteInputRef = useRef<HTMLInputElement | null>(null);
+  const simNoticeTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     try {
@@ -796,6 +811,22 @@ export default function App() {
   useEffect(() => {
     statusUnitIdRef.current = statusUnitId;
   }, [statusUnitId]);
+
+  function showSimNotice(text: string, level: "success" | "error" | "info" = "info", ttlMs = 4200) {
+    setSimNotice({ text, level });
+    if (simNoticeTimerRef.current) window.clearTimeout(simNoticeTimerRef.current);
+    simNoticeTimerRef.current = window.setTimeout(() => {
+      setSimNotice(null);
+      simNoticeTimerRef.current = null;
+    }, ttlMs);
+  }
+
+  useEffect(
+    () => () => {
+      if (simNoticeTimerRef.current) window.clearTimeout(simNoticeTimerRef.current);
+    },
+    []
+  );
 
   useEffect(() => {
     async function loadOfficerPanels() {
@@ -921,6 +952,13 @@ export default function App() {
     const timer = window.setInterval(refreshDashboard, intervalMs);
     return () => window.clearInterval(timer);
   }, [patrolStatus?.enabled]);
+
+  useEffect(() => {
+    if (!patrolStatus?.enabled || !patrolStatus.started_at) return;
+    setSimClockNowMs(Date.now());
+    const timer = window.setInterval(() => setSimClockNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [patrolStatus?.enabled, patrolStatus?.started_at]);
 
   useEffect(() => {
     if (!started) return;
@@ -1548,12 +1586,14 @@ export default function App() {
   }
 
   async function handleToggleLiveSimulation() {
+    if (liveSimBusy) return;
     const liveRunning = Boolean(patrolStatus?.enabled && patrolStatus.profile === "LIVE_DEV");
-    setLoading(true);
+    setLiveSimBusy(true);
     try {
       if (liveRunning) {
         await fetchJson<{ stopped: boolean }>("/api/v1/intake/patrol-sim/stop", { method: "POST" });
         setBanner("Live simulation stopped.");
+        showSimNotice("Live simulation stopped.", "success");
       } else {
         const result = await fetchJson<{
           dispatchable_units: number;
@@ -1584,13 +1624,18 @@ export default function App() {
         setBanner(
           `Live simulation active: ${result.dispatchable_units} patrol units roaming, ${result.initial_calls} active starter calls, max ${result.max_active_calls}. Call catalog ${result.call_types_loaded ?? 0} types / ${result.call_locations_loaded ?? 0} Redlands locations.`
         );
+        showSimNotice(
+          `Simulation started: ${result.initial_calls} active calls and ${result.dispatchable_units} patrol units online.`,
+          "success"
+        );
         setActiveModule(sessionRole === "Officer" ? "assignedDeck" : "queue");
       }
       await refreshDashboard();
     } catch (error) {
       setBanner(`Live simulation toggle failed: ${(error as Error).message}`);
+      showSimNotice(`Live simulation failed to toggle: ${(error as Error).message}`, "error", 5200);
     } finally {
-      setLoading(false);
+      setLiveSimBusy(false);
     }
   }
 
@@ -1608,7 +1653,8 @@ export default function App() {
   }
 
   async function handleRunLiveSimulationTick() {
-    setLoading(true);
+    if (liveSimBusy) return;
+    setLiveSimBusy(true);
     try {
       const result = await fetchJson<{ advanced: boolean; reason?: string; active_incidents?: number; calls_generated_this_tick?: number }>(
         "/api/v1/intake/patrol-sim/tick",
@@ -1616,16 +1662,19 @@ export default function App() {
       );
       if (!result.advanced) {
         setBanner(`Live simulation tick skipped: ${result.reason ?? "interval gate"}.`);
+        showSimNotice(`Tick skipped: ${result.reason ?? "interval gate"}.`, "info");
       } else {
         setBanner(
           `Live simulation tick advanced. Active calls ${result.active_incidents ?? 0} · New calls this tick ${result.calls_generated_this_tick ?? 0}.`
         );
+        showSimNotice("Live simulation tick advanced.", "info");
       }
       await refreshDashboard();
     } catch (error) {
       setBanner(`Live simulation tick failed: ${(error as Error).message}`);
+      showSimNotice(`Live simulation tick failed: ${(error as Error).message}`, "error", 5200);
     } finally {
-      setLoading(false);
+      setLiveSimBusy(false);
     }
   }
 
@@ -2334,6 +2383,12 @@ export default function App() {
   const liveUnitsAssigned = patrolStatus?.calls_assigned ?? patrolStatus?.calls_auto_assigned ?? 0;
   const liveCallsResolved = patrolStatus?.calls_resolved ?? 0;
   const liveActiveCalls = patrolStatus?.active_incidents ?? queue.length;
+  const liveStartedAtMs = patrolStatus?.started_at ? Date.parse(patrolStatus.started_at) : NaN;
+  const liveRuntimeSeconds =
+    liveSimulationRunning && Number.isFinite(liveStartedAtMs)
+      ? Math.max(0, Math.floor((simClockNowMs - liveStartedAtMs) / 1000))
+      : 0;
+  const liveRuntimeLabel = formatDuration(liveRuntimeSeconds);
   const liveRoster = useMemo(
     () =>
       (mapData?.units ?? units)
@@ -2677,34 +2732,39 @@ export default function App() {
           className={`live-sim-cta ${liveSimulationRunning ? "active" : ""}`}
           type="button"
           onClick={handleToggleLiveSimulation}
-          disabled={loading}
+          disabled={liveSimBusy}
         >
-          {liveSimulationRunning ? "Stop Live Simulation" : "Start Live Simulation"}
+          {liveSimBusy ? "Working..." : liveSimulationRunning ? "Stop Live Simulation" : "Start Live Simulation"}
         </button>
         <button
           className={`dispatch-secondary live-sim-toggle ${liveSimPanelOpen ? "active" : ""}`}
           type="button"
           onClick={() => setLiveSimPanelOpen((prev) => !prev)}
-          disabled={loading}
+          disabled={liveSimBusy}
         >
           {liveSimPanelOpen ? "Hide Console" : "Open Console"}
         </button>
         <div className="live-sim-meta">
           <strong>{liveSimulationRunning ? "LIVE DEV RUNNING" : "Simulation Offline"}</strong>
           <p>
-            Patrol units: {patrolStatus?.dispatchable_units ?? 0} · Active calls: {liveActiveCalls}/{patrolStatus?.max_active_calls ?? 10} · Tick {patrolStatus?.tick_index ?? 0}
+            Patrol units: {patrolStatus?.dispatchable_units ?? 0} · Active calls: {liveActiveCalls}/{patrolStatus?.max_active_calls ?? 10} · Tick {patrolStatus?.tick_index ?? 0} · Runtime {liveRuntimeLabel}
           </p>
         </div>
       </section>
+      {simNotice ? (
+        <div className={`sim-notice ${simNotice.level}`}>
+          {simNotice.text}
+        </div>
+      ) : null}
       {liveSimPanelOpen ? (
         <section className="live-sim-panel card panel">
           <div className="live-sim-panel-head">
             <h2>Live Simulation Console</h2>
             <div className="button-grid">
-              <button type="button" onClick={handleToggleLiveSimulation} disabled={loading}>
-                {liveSimulationRunning ? "Stop Live Simulation" : "Start Live Simulation"}
+              <button type="button" onClick={handleToggleLiveSimulation} disabled={liveSimBusy}>
+                {liveSimBusy ? "Working..." : liveSimulationRunning ? "Stop Live Simulation" : "Start Live Simulation"}
               </button>
-              <button type="button" onClick={handleRunLiveSimulationTick} disabled={loading || !patrolStatus?.enabled}>
+              <button type="button" onClick={handleRunLiveSimulationTick} disabled={liveSimBusy || !patrolStatus?.enabled}>
                 Force Tick
               </button>
             </div>
@@ -2714,6 +2774,7 @@ export default function App() {
             <div className="kpi"><span>Units Assigned</span><strong>{liveUnitsAssigned}</strong></div>
             <div className="kpi"><span>Calls Resolved</span><strong>{liveCallsResolved}</strong></div>
             <div className="kpi"><span>Active Calls</span><strong>{liveActiveCalls}</strong></div>
+            <div className="kpi"><span>Runtime</span><strong>{liveRuntimeLabel}</strong></div>
           </div>
           <div className="dispatch-banner">
             Call catalog: {patrolStatus?.call_types_loaded ?? 0} call types · {patrolStatus?.call_locations_loaded ?? 0} Redlands locations · Next call due {patrolStatus?.next_call_due_at ?? "pending"}
@@ -2926,7 +2987,7 @@ export default function App() {
               </button>
             </div>
             <div className="dev-actions">
-              <button type="button" onClick={handleToggleLiveSimulation} disabled={loading}>
+              <button type="button" onClick={handleToggleLiveSimulation} disabled={liveSimBusy}>
                 {liveSimulationRunning ? "Stop Live Simulation" : "Start Live Simulation"}
               </button>
             </div>

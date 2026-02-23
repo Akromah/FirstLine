@@ -168,12 +168,12 @@ def infer_required_skills(call_type: str, call_text: str) -> list[str]:
     if category in {"DOMESTIC", "VIOLENT"}:
         skills.append("Crisis")
     if any(k in type_text for k in ["warrant", "weapon", "shots fired", "robbery"]):
-        skills.append("SWAT")
+        skills.append("Crisis")
     if any(k in text for k in ["spanish", "translation", "habla"]):
         skills.append("Spanish")
     if any(k in text for k in ["k9", "canine", "track"]):
         skills.append("K9")
-    if any(k in text for k in ["rifle", "active shooter", "hostage", "swat"]):
+    if any(k in text for k in ["active shooter", "hostage", "swat requested"]):
         skills.append("SWAT")
     return sorted(set(skills))
 

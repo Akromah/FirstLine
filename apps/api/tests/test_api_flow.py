@@ -447,8 +447,10 @@ def test_intake_dispatch_reporting_flow() -> None:
     assert patrol_status_response.status_code == 200
     patrol_status_payload = patrol_status_response.json()
     assert patrol_status_payload["enabled"] is True
+    assert patrol_status_payload["started_at"] is not None
     assert patrol_status_payload["dispatchable_units"] == 10
     assert patrol_status_payload["senior_units"] == 2
+    assert patrol_status_payload["calls_received"] >= 4
 
     patrol_map_response = client.get("/api/v1/map/overview")
     assert patrol_map_response.status_code == 200
@@ -600,6 +602,7 @@ def test_intake_dispatch_reporting_flow() -> None:
     assert live_status_payload["enabled"] is True
     assert live_status_payload["profile"] == "LIVE_DEV"
     assert live_status_payload["logged_in_unit_id"] == "u-day-3"
+    assert live_status_payload["started_at"] is not None
     assert live_status_payload["call_types_loaded"] >= 50
     assert live_status_payload["call_locations_loaded"] >= 50
 
