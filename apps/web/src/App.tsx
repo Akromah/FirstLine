@@ -1,5 +1,5 @@
 ﻿
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Coordinates = { lat: number; lon: number };
 type IncidentSummary = {
@@ -79,12 +79,52 @@ type UnitAvailabilityBoard = {
     disposition_summary?: string | null;
   }>;
 };
+type DispatchWorkflowRow = {
+  incident_id: string;
+  call_display: string;
+  call_type: string;
+  primary_code?: string | null;
+  crime_label?: string | null;
+  priority: number;
+  address: string;
+  status: string;
+  phase: string;
+  assigned_unit_id?: string | null;
+  assigned_callsign?: string | null;
+  assigned_officer?: string | null;
+  unit_status?: string | null;
+  created_at: string;
+  elapsed_minutes: number;
+  latest_event?: string | null;
+  latest_action?: string | null;
+  latest_event_time?: string | null;
+  disposition_code?: string | null;
+  disposition_summary?: string | null;
+  closed_at?: string | null;
+};
+type DispatchWorkflowBoard = {
+  summary: {
+    total_calls: number;
+    active_calls: number;
+    resolved_calls: number;
+    queued_calls: number;
+    assigned_calls: number;
+    on_scene_calls: number;
+  };
+  active_workflows: DispatchWorkflowRow[];
+  resolved_workflows: DispatchWorkflowRow[];
+};
 type BeatOverlay = {
   beat_id: number;
   label: string;
   shift_coverage: string[];
   center: Coordinates;
-  coordinates: Coordinates[];
+  coordinates?: Coordinates[];
+  boundary_roads?: string[];
+  border_paths?: Array<{
+    name: string;
+    coordinates: Coordinates[];
+  }>;
 };
 type PatrolSimulationStatus = {
   enabled: boolean;
@@ -334,11 +374,6 @@ type MessageInbox = {
   unread_estimate: number;
   messages: MessageThread[];
 };
-type IncidentChannel = {
-  incident_id: string;
-  message_count: number;
-  messages: MessageThread[];
-};
 type HandoffNote = {
   note_id: string;
   incident_id: string;
@@ -415,6 +450,83 @@ type CommandTrends = {
     average_response_minutes: { series: number[]; change: number };
   };
 };
+type CommandReportQueue = {
+  report_count: number;
+  pending_review_count: number;
+  reports: Array<{
+    report_id: string;
+    incident_id: string;
+    unit_id: string;
+    template_id?: string | null;
+    status: string;
+    review_status?: string | null;
+    review_notes?: string | null;
+    updated_at: string;
+    narrative_preview: string;
+    narrative_length: number;
+    incident_status?: string | null;
+    call_type?: string | null;
+    primary_code?: string | null;
+    priority?: number | null;
+    requires_supervisor_review: boolean;
+    disposition_code?: string | null;
+  }>;
+};
+type CommandCallHistory = {
+  generated_at: string;
+  history_date_utc: string;
+  shift_filter: string;
+  include_open: boolean;
+  call_count: number;
+  resolved_count: number;
+  open_count: number;
+  report_count: number;
+  timeline_line_count: number;
+  calls: Array<{
+    incident_id: string;
+    call_display: string;
+    call_type: string;
+    primary_code?: string | null;
+    crime_label?: string | null;
+    priority: number;
+    address: string;
+    status: string;
+    created_at: string;
+    closed_at?: string | null;
+    assigned_unit_id?: string | null;
+    assigned_callsign?: string | null;
+    assigned_officer?: string | null;
+    assigned_shift?: string | null;
+    handling_unit_id?: string | null;
+    handling_unit_label?: string | null;
+    disposition_code?: string | null;
+    disposition_summary?: string | null;
+    requires_supervisor_review?: boolean;
+    timeline_lines: Array<{
+      line_no: number;
+      time: string;
+      event: string;
+      unit_id?: string | null;
+      unit_label?: string | null;
+      line: string;
+    }>;
+    timeline_line_count: number;
+    reports: Array<{
+      report_id: string;
+      unit_id?: string | null;
+      unit_label?: string | null;
+      status: string;
+      review_status?: string | null;
+      review_notes?: string | null;
+      updated_at: string;
+      narrative?: string;
+      structured_fields?: Record<string, string>;
+      evidence_links?: Array<{ type: string; uri: string; added_at?: string }>;
+      evidence_count: number;
+    }>;
+    report_count: number;
+  }>;
+};
 type AIReportAssist = {
   improved_narrative: string;
   key_points: string[];
@@ -467,6 +579,8 @@ type ModulePanel =
   | "policyHub"
   | "codeHub"
   | "commandDash"
+  | "commandReports"
+  | "commandCallHistory"
   | "unitReadiness"
   | "opTrends"
   | "reviewQueue"
@@ -510,19 +624,31 @@ const MAP_FALLBACK_STYLE = {
   ],
 };
 const PREFS_KEY = "firstline_ui_prefs_v1";
+const MESSAGE_UI_PREFS_KEY = "firstline_message_ui_v1";
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const bases = API_BASE ? [API_BASE, ""] : [""];
+  const localFallbackBases = [
+    "http://127.0.0.1:4100",
+    "http://localhost:4100",
+    "http://127.0.0.1:4000",
+    "http://localhost:4000",
+  ];
+  const candidates = API_BASE ? [API_BASE, "", ...localFallbackBases] : ["", ...localFallbackBases];
+  const bases = Array.from(new Set(candidates));
   let lastError: Error | null = null;
 
   for (let index = 0; index < bases.length; index += 1) {
     const base = bases[index];
     const url = `${base}${path}`;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 7000);
     try {
       const res = await fetch(url, {
         ...init,
+        signal: controller.signal,
         headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
       });
+      window.clearTimeout(timeout);
       if (!res.ok) {
         const err = new Error(`Request failed: ${res.status}`);
         if (index < bases.length - 1) {
@@ -533,6 +659,7 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
       }
       return (await res.json()) as T;
     } catch (error) {
+      window.clearTimeout(timeout);
       const err = error as Error;
       if (index < bases.length - 1) {
         lastError = err;
@@ -589,6 +716,115 @@ function formatDuration(totalSeconds: number): string {
   return `${secs}s`;
 }
 
+function formatClockDuration(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const hrs = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  const hh = String(hrs).padStart(2, "0");
+  const mm = String(mins).padStart(2, "0");
+  const ss = String(secs).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
+}
+
+function shortStatusCode(statusCode: string): string {
+  const normalized = statusCode.trim().toUpperCase();
+  if (normalized.includes("ON_SCENE")) return "SC";
+  if (normalized.includes("EN_ROUTE")) return "EN";
+  if (normalized.includes("TRANSPORT")) return "TR";
+  if (normalized.includes("BUSY")) return "BU";
+  if (normalized.includes("AVAILABLE")) return "AV";
+  if (normalized.includes("OFF_DUTY")) return "OD";
+  return normalized.slice(0, 2);
+}
+
+function normalizeStatusLabel(status?: string | null): string {
+  const normalized = String(status ?? "").trim().toUpperCase();
+  if (!normalized) return "Unknown";
+  if (normalized.includes("ON_SCENE")) return "On Scene";
+  if (normalized.includes("EN_ROUTE")) return "En Route";
+  if (normalized.includes("TRANSPORT")) return "Transport";
+  if (normalized.includes("BUSY")) return "Busy";
+  if (normalized.includes("AVAILABLE")) return "Available";
+  if (normalized.includes("OFF_DUTY")) return "Off Duty";
+  if (normalized === "ONLINE") return "Online";
+  return normalized.replaceAll("_", " ");
+}
+
+function statusTone(status?: string | null): "available" | "busy" | "offline" | "other" {
+  const normalized = String(status ?? "").trim().toUpperCase();
+  if (normalized.includes("AVAILABLE") || normalized === "ONLINE") return "available";
+  if (normalized.includes("OFF_DUTY")) return "offline";
+  if (["ON_SCENE", "EN_ROUTE", "TRANSPORT", "BUSY"].some((token) => normalized.includes(token))) return "busy";
+  return "other";
+}
+
+function shiftDigit(shift?: string | null): string {
+  const normalized = String(shift ?? "").trim().toUpperCase();
+  if (normalized.startsWith("DAY")) return "1";
+  if (normalized.startsWith("SWING")) return "2";
+  if (normalized.startsWith("NIGHT")) return "3";
+  return "1";
+}
+
+function unitNumberByShape(unitLike: {
+  shift?: string | null;
+  beat?: number | null;
+  unit_id?: string | null;
+  callsign?: string | null;
+} | null | undefined): string {
+  if (!unitLike) return "--";
+  if (typeof unitLike.beat === "number" && unitLike.beat > 0) {
+    return `${shiftDigit(unitLike.shift)}${unitLike.beat}`;
+  }
+  const unitId = String(unitLike.unit_id ?? "");
+  const idMatch = unitId.match(/^u-(day|swing|night)-(\d+)$/i);
+  if (idMatch) {
+    const shiftMap: Record<string, string> = { day: "1", swing: "2", night: "3" };
+    return `${shiftMap[idMatch[1].toLowerCase()] ?? "1"}${idMatch[2]}`;
+  }
+  const callsign = String(unitLike.callsign ?? "");
+  const carMatch = callsign.match(/(?:car|unit)\s*([123])(\d+)/i);
+  if (carMatch) return `${carMatch[1]}${carMatch[2]}`;
+  const digits = callsign.match(/\d+/g)?.join("");
+  if (digits) return digits.slice(0, 3);
+  return "--";
+}
+
+function officerLastName(name?: string | null): string {
+  const raw = String(name ?? "").trim();
+  if (!raw) return "Unit";
+  const scrubbed = raw.replace(/^(Ofc\.|Officer|Sgt\.|Sergeant|Lt\.|Lieutenant)\s+/i, "").trim();
+  const parts = scrubbed.split(/\s+/).filter(Boolean);
+  return parts[parts.length - 1] ?? "Unit";
+}
+
+function compactUnitLabel(unitLike: {
+  shift?: string | null;
+  beat?: number | null;
+  unit_id?: string | null;
+  callsign?: string | null;
+  officer_name?: string | null;
+} | null | undefined): string {
+  if (!unitLike) return "Unknown";
+  if (String(unitLike.unit_id ?? "").toUpperCase() === "DISPATCH") return "Dispatch";
+  const number = unitNumberByShape(unitLike);
+  const lastName = officerLastName(unitLike.officer_name ?? unitLike.callsign ?? null);
+  return `${number} ${lastName}`.trim();
+}
+
+function formatMessageTimestamp(value?: string | null): string {
+  if (!value) return "";
+  const stamp = new Date(value);
+  if (Number.isNaN(stamp.getTime())) return value;
+  const now = Date.now();
+  const elapsed = now - stamp.getTime();
+  const dayMs = 24 * 60 * 60 * 1000;
+  if (elapsed < dayMs) return stamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (elapsed < 7 * dayMs) return stamp.toLocaleDateString([], { weekday: "short" });
+  return stamp.toLocaleDateString([], { month: "numeric", day: "numeric" });
+}
+
 function incidentDispatchLabel(incident: IncidentSummary | null | undefined): string {
   if (!incident) return "Unknown";
   const code = (incident.primary_code ?? "").trim();
@@ -608,12 +844,14 @@ export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>("Dispatch");
   const [activeModule, setActiveModule] = useState<ModulePanel>("queue");
   const [liveSimPanelOpen, setLiveSimPanelOpen] = useState(false);
+  const [moduleDockOpen, setModuleDockOpen] = useState(false);
+  const [statusDetailsOpen, setStatusDetailsOpen] = useState(false);
   const [moduleSearch, setModuleSearch] = useState("");
   const [openModuleGroups, setOpenModuleGroups] = useState<Record<ModuleGroupId, boolean>>({
     ops: true,
-    field: true,
-    reporting: true,
-    intel: true,
+    field: false,
+    reporting: false,
+    intel: false,
     command: false,
     system: false,
   });
@@ -629,8 +867,17 @@ export default function App() {
   const [units, setUnits] = useState<UnitSummary[]>([]);
   const [command, setCommand] = useState<any>(null);
   const [commandTrends, setCommandTrends] = useState<CommandTrends | null>(null);
+  const [commandReports, setCommandReports] = useState<CommandReportQueue | null>(null);
+  const [commandCallHistory, setCommandCallHistory] = useState<CommandCallHistory | null>(null);
+  const [commandHistoryDate, setCommandHistoryDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [commandHistoryShift, setCommandHistoryShift] = useState("ALL");
+  const [commandCallSearch, setCommandCallSearch] = useState("");
+  const [commandReportSearch, setCommandReportSearch] = useState("");
+  const [commandReportReviewFilter, setCommandReportReviewFilter] = useState("ALL");
   const [unitBoard, setUnitBoard] = useState<UnitBoard | null>(null);
   const [availabilityBoard, setAvailabilityBoard] = useState<UnitAvailabilityBoard | null>(null);
+  const [unitStatusClocks, setUnitStatusClocks] = useState<Record<string, { status: string; sinceMs: number }>>({});
+  const [workflowBoard, setWorkflowBoard] = useState<DispatchWorkflowBoard | null>(null);
   const [priorityBoard, setPriorityBoard] = useState<PriorityRadar | null>(null);
   const [mapData, setMapData] = useState<MapOverview | null>(null);
   const [patrolStatus, setPatrolStatus] = useState<PatrolSimulationStatus | null>(null);
@@ -643,23 +890,53 @@ export default function App() {
   const [incidentDetail, setIncidentDetail] = useState<IncidentDetail | null>(null);
   const [reportReadiness, setReportReadiness] = useState<ReportReadiness | null>(null);
   const [quickActionsPolicy, setQuickActionsPolicy] = useState<QuickActionsPolicy | null>(null);
+  const [commandReviewDraft, setCommandReviewDraft] = useState<ReportDraftDetail | null>(null);
+  const [commandReviewBusy, setCommandReviewBusy] = useState(false);
+  const [commandReviewError, setCommandReviewError] = useState("");
 
   const [selectedIncidentId, setSelectedIncidentId] = useState("");
   const [queueStatusFilter, setQueueStatusFilter] = useState("ALL");
   const [queuePriorityFloor, setQueuePriorityFloor] = useState(0);
+  const [queueSearch, setQueueSearch] = useState("");
+  const [queueSortMode, setQueueSortMode] = useState("PRIORITY_DESC");
+  const [statusBoardSearch, setStatusBoardSearch] = useState("");
+  const [statusBoardToneFilter, setStatusBoardToneFilter] = useState("ALL");
   const selectedIncident = useMemo(
     () => queue.find((item) => item.incident_id === selectedIncidentId) ?? queue[0],
     [queue, selectedIncidentId]
   );
-  const filteredQueue = useMemo(
-    () =>
-      queue.filter((item) => {
+  const queueSearchQuery = queueSearch.trim().toLowerCase();
+  const filteredQueue = useMemo(() => {
+    const filtered = queue.filter((item) => {
         const statusMatch = queueStatusFilter === "ALL" || item.status === queueStatusFilter;
         const priorityMatch = item.priority >= queuePriorityFloor;
-        return statusMatch && priorityMatch;
-      }),
-    [queue, queueStatusFilter, queuePriorityFloor]
-  );
+        const callDisplay = incidentDispatchLabel(item).toLowerCase();
+        const searchMatch =
+          !queueSearchQuery ||
+          item.incident_id.toLowerCase().includes(queueSearchQuery) ||
+          item.address.toLowerCase().includes(queueSearchQuery) ||
+          callDisplay.includes(queueSearchQuery);
+        return statusMatch && priorityMatch && searchMatch;
+      });
+    const statusRank: Record<string, number> = {
+      NEW: 0,
+      DISPATCHED: 1,
+      EN_ROUTE: 2,
+      ON_SCENE: 3,
+      TRANSPORT: 4,
+      CLOSED: 5,
+    };
+    filtered.sort((a, b) => {
+      if (queueSortMode === "PRIORITY_ASC") return a.priority - b.priority;
+      if (queueSortMode === "STATUS") {
+        const statusDelta = (statusRank[a.status] ?? 99) - (statusRank[b.status] ?? 99);
+        if (statusDelta !== 0) return statusDelta;
+      }
+      if (queueSortMode === "INCIDENT") return a.incident_id.localeCompare(b.incident_id);
+      return b.priority - a.priority;
+    });
+    return filtered;
+  }, [queue, queueStatusFilter, queuePriorityFloor, queueSearchQuery, queueSortMode]);
 
   const [requiredSkills, setRequiredSkills] = useState("Crisis");
   const [recommendation, setRecommendation] = useState<any>(null);
@@ -683,7 +960,6 @@ export default function App() {
   const [mockUnitsCount, setMockUnitsCount] = useState(14);
   const [mockIncidentsCount, setMockIncidentsCount] = useState(18);
   const [mockClearExisting, setMockClearExisting] = useState(false);
-  const [patrolTickSeconds, setPatrolTickSeconds] = useState(12);
   const [patrolInitialCalls, setPatrolInitialCalls] = useState(4);
 
   const [dispositionCode, setDispositionCode] = useState("WARNING_ISSUED");
@@ -718,11 +994,10 @@ export default function App() {
   const [officerFeed, setOfficerFeed] = useState<OfficerFeed | null>(null);
   const [officerCallHistory, setOfficerCallHistory] = useState<OfficerCallHistory | null>(null);
   const [messageTarget, setMessageTarget] = useState("DISPATCH");
-  const [messageContactSearch, setMessageContactSearch] = useState("");
-  const [messagePriority, setMessagePriority] = useState("NORMAL");
-  const [channelIncidentId, setChannelIncidentId] = useState("");
-  const [incidentChannel, setIncidentChannel] = useState<IncidentChannel | null>(null);
-  const [sendToIncidentChannel, setSendToIncidentChannel] = useState(true);
+  const [messageThreadSearch, setMessageThreadSearch] = useState("");
+  const [messageTargetByUnit, setMessageTargetByUnit] = useState<Record<string, string>>({});
+  const [threadReadByUnit, setThreadReadByUnit] = useState<Record<string, Record<string, string>>>({});
+  const [typingByUnit, setTypingByUnit] = useState<Record<string, boolean>>({});
   const [messageBody, setMessageBody] = useState("");
   const [messageStatus, setMessageStatus] = useState("");
   const [handoffAudience, setHandoffAudience] = useState("ALL");
@@ -769,10 +1044,16 @@ export default function App() {
   const mapFallbackTriedRef = useRef(false);
   const selectedIncidentIdRef = useRef(selectedIncidentId);
   const statusUnitIdRef = useRef(statusUnitId);
+  const commandHistoryDateRef = useRef(commandHistoryDate);
+  const commandHistoryShiftRef = useRef(commandHistoryShift);
   const dictationRef = useRef<any>(null);
   const dictationStartRef = useRef<number | null>(null);
   const commandPaletteInputRef = useRef<HTMLInputElement | null>(null);
+  const messageThreadListRef = useRef<HTMLDivElement | null>(null);
+  const messageStatusTimerRef = useRef<number | null>(null);
   const simNoticeTimerRef = useRef<number | null>(null);
+  const simulatedReplyTimersRef = useRef<number[]>([]);
+  const simulatedTypingTimersRef = useRef<number[]>([]);
 
   useEffect(() => {
     try {
@@ -787,6 +1068,15 @@ export default function App() {
       if (typeof prefs.showMapIncidents === "boolean") setShowMapIncidents(prefs.showMapIncidents);
       if (typeof prefs.showMapBeats === "boolean") setShowMapBeats(prefs.showMapBeats);
       if (typeof prefs.autoSaveEnabled === "boolean") setAutoSaveEnabled(prefs.autoSaveEnabled);
+      if (typeof prefs.queueStatusFilter === "string") setQueueStatusFilter(prefs.queueStatusFilter);
+      if (typeof prefs.queuePriorityFloor === "number") setQueuePriorityFloor(prefs.queuePriorityFloor);
+      if (typeof prefs.queueSearch === "string") setQueueSearch(prefs.queueSearch);
+      if (typeof prefs.queueSortMode === "string") setQueueSortMode(prefs.queueSortMode);
+      if (typeof prefs.statusBoardSearch === "string") setStatusBoardSearch(prefs.statusBoardSearch);
+      if (typeof prefs.statusBoardToneFilter === "string") setStatusBoardToneFilter(prefs.statusBoardToneFilter);
+      if (typeof prefs.commandCallSearch === "string") setCommandCallSearch(prefs.commandCallSearch);
+      if (typeof prefs.commandReportSearch === "string") setCommandReportSearch(prefs.commandReportSearch);
+      if (typeof prefs.commandReportReviewFilter === "string") setCommandReportReviewFilter(prefs.commandReportReviewFilter);
     } catch {
       // Ignore malformed local preference payloads.
     }
@@ -805,12 +1095,72 @@ export default function App() {
           showMapIncidents,
           showMapBeats,
           autoSaveEnabled,
+          queueStatusFilter,
+          queuePriorityFloor,
+          queueSearch,
+          queueSortMode,
+          statusBoardSearch,
+          statusBoardToneFilter,
+          commandCallSearch,
+          commandReportSearch,
+          commandReportReviewFilter,
         })
       );
     } catch {
       // Ignore storage write failures.
     }
-  }, [sessionRole, viewMode, statusUnitId, activeModule, showMapUnits, showMapIncidents, showMapBeats, autoSaveEnabled]);
+  }, [
+    sessionRole,
+    viewMode,
+    statusUnitId,
+    activeModule,
+    showMapUnits,
+    showMapIncidents,
+    showMapBeats,
+    autoSaveEnabled,
+    queueStatusFilter,
+    queuePriorityFloor,
+    queueSearch,
+    queueSortMode,
+    statusBoardSearch,
+    statusBoardToneFilter,
+    commandCallSearch,
+    commandReportSearch,
+    commandReportReviewFilter,
+  ]);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(MESSAGE_UI_PREFS_KEY);
+      if (!raw) return;
+      const prefs = JSON.parse(raw) as {
+        messageTargetByUnit?: Record<string, string>;
+        threadReadByUnit?: Record<string, Record<string, string>>;
+      };
+      if (prefs.messageTargetByUnit && typeof prefs.messageTargetByUnit === "object") {
+        setMessageTargetByUnit(prefs.messageTargetByUnit);
+      }
+      if (prefs.threadReadByUnit && typeof prefs.threadReadByUnit === "object") {
+        setThreadReadByUnit(prefs.threadReadByUnit);
+      }
+    } catch {
+      // Ignore malformed messaging preference payloads.
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        MESSAGE_UI_PREFS_KEY,
+        JSON.stringify({
+          messageTargetByUnit,
+          threadReadByUnit,
+        })
+      );
+    } catch {
+      // Ignore storage write failures.
+    }
+  }, [messageTargetByUnit, threadReadByUnit]);
 
   useEffect(() => {
     selectedIncidentIdRef.current = selectedIncidentId;
@@ -819,6 +1169,42 @@ export default function App() {
   useEffect(() => {
     statusUnitIdRef.current = statusUnitId;
   }, [statusUnitId]);
+
+  useEffect(() => {
+    commandHistoryDateRef.current = commandHistoryDate;
+  }, [commandHistoryDate]);
+
+  useEffect(() => {
+    commandHistoryShiftRef.current = commandHistoryShift;
+  }, [commandHistoryShift]);
+
+  useEffect(() => {
+    if (!availabilityBoard) return;
+    const nowMs = Date.now();
+    const allUnits = [
+      ...(availabilityBoard.available_units ?? []),
+      ...(availabilityBoard.unavailable_units ?? []),
+    ];
+    setUnitStatusClocks((previous) => {
+      const next = { ...previous };
+      const seen = new Set<string>();
+      allUnits.forEach((unit) => {
+        const unitId = unit.unit_id;
+        const nextStatus = String(unit.status_code ?? unit.dispatch_note ?? unit.role ?? "UNKNOWN").toUpperCase();
+        seen.add(unitId);
+        const current = previous[unitId];
+        if (!current || current.status !== nextStatus) {
+          next[unitId] = { status: nextStatus, sinceMs: nowMs };
+        } else {
+          next[unitId] = current;
+        }
+      });
+      Object.keys(next).forEach((unitId) => {
+        if (!seen.has(unitId)) delete next[unitId];
+      });
+      return next;
+    });
+  }, [availabilityBoard]);
 
   function showSimNotice(text: string, level: "success" | "error" | "info" = "info", ttlMs = 4200) {
     setSimNotice({ text, level });
@@ -831,7 +1217,12 @@ export default function App() {
 
   useEffect(
     () => () => {
+      if (messageStatusTimerRef.current) window.clearTimeout(messageStatusTimerRef.current);
       if (simNoticeTimerRef.current) window.clearTimeout(simNoticeTimerRef.current);
+      simulatedReplyTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+      simulatedTypingTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+      simulatedReplyTimersRef.current = [];
+      simulatedTypingTimersRef.current = [];
     },
     []
   );
@@ -857,22 +1248,6 @@ export default function App() {
   }, [statusUnitId]);
 
   useEffect(() => {
-    async function loadIncidentChannel() {
-      if (!channelIncidentId) {
-        setIncidentChannel(null);
-        return;
-      }
-      try {
-        const channel = await fetchJson<IncidentChannel>(`/api/v1/officer/channel/${channelIncidentId}?limit=10`);
-        setIncidentChannel(channel);
-      } catch {
-        setIncidentChannel(null);
-      }
-    }
-    loadIncidentChannel();
-  }, [channelIncidentId]);
-
-  useEffect(() => {
     async function loadHandoffFeed() {
       if (!selectedIncident?.incident_id) {
         setHandoffFeed(null);
@@ -893,6 +1268,10 @@ export default function App() {
     setActiveModule("mapOnly");
   }, [sessionRole]);
 
+  useEffect(() => {
+    void refreshDashboard();
+  }, [commandHistoryDate, commandHistoryShift]);
+
   async function refreshDashboard() {
     const feedPromise = statusUnitIdRef.current
       ? fetchJsonSafe<OfficerFeed>(`/api/v1/officer/feed/${statusUnitIdRef.current}`)
@@ -903,18 +1282,19 @@ export default function App() {
     const historyPromise = statusUnitIdRef.current
       ? fetchJsonSafe<OfficerCallHistory>(`/api/v1/officer/call-history/${statusUnitIdRef.current}?limit=25`)
       : Promise.resolve(null);
-    const channelPromise = selectedIncidentIdRef.current
-      ? fetchJsonSafe<IncidentChannel>(`/api/v1/officer/channel/${selectedIncidentIdRef.current}?limit=10`)
-      : Promise.resolve(null);
-
-    const [q, u, ub, ab, pb, c, ct, m, h, rm, rq, inbox, feed, history, channel, patrol] = await Promise.all([
+    const [q, u, ub, ab, wb, pb, c, ct, cr, ch, m, h, rm, rq, inbox, feed, history, patrol] = await Promise.all([
       fetchJsonSafe<{ incidents: IncidentSummary[] }>("/api/v1/dispatch/queue"),
       fetchJsonSafe<{ units: UnitSummary[] }>("/api/v1/dispatch/units"),
       fetchJsonSafe<UnitBoard>("/api/v1/dispatch/unit-board"),
       fetchJsonSafe<UnitAvailabilityBoard>("/api/v1/dispatch/availability-board"),
+      fetchJsonSafe<DispatchWorkflowBoard>("/api/v1/dispatch/workflow-board?active_limit=20&resolved_limit=20"),
       fetchJsonSafe<PriorityRadar>("/api/v1/dispatch/priority-board?limit=6"),
       fetchJsonSafe<any>("/api/v1/command/overview"),
       fetchJsonSafe<CommandTrends>("/api/v1/command/trends?periods=6"),
+      fetchJsonSafe<CommandReportQueue>("/api/v1/command/reports?limit=20"),
+      fetchJsonSafe<CommandCallHistory>(
+        `/api/v1/command/call-history?limit=80&history_date_utc=${encodeURIComponent(commandHistoryDateRef.current)}&shift=${encodeURIComponent(commandHistoryShiftRef.current)}`
+      ),
       fetchJsonSafe<MapOverview>("/api/v1/map/overview"),
       fetchJsonSafe<ReportingHub>("/api/v1/reporting/hub"),
       fetchJsonSafe<ReportingMetrics>("/api/v1/reporting/metrics"),
@@ -922,7 +1302,6 @@ export default function App() {
       inboxPromise,
       feedPromise,
       historyPromise,
-      channelPromise,
       fetchJsonSafe<PatrolSimulationStatus>("/api/v1/intake/patrol-sim/status"),
     ]);
 
@@ -938,9 +1317,12 @@ export default function App() {
     }
     if (ub) setUnitBoard(ub);
     if (ab) setAvailabilityBoard(ab);
+    if (wb) setWorkflowBoard(wb);
     if (pb) setPriorityBoard(pb);
     if (c) setCommand(c);
     if (ct) setCommandTrends(ct);
+    if (cr) setCommandReports(cr);
+    if (ch) setCommandCallHistory(ch);
     if (m) {
       setMapData(m);
       setPatrolStatus(m.patrol_simulation ?? patrol ?? null);
@@ -953,7 +1335,6 @@ export default function App() {
     if (inbox !== null) setMessageInbox(inbox);
     if (feed !== null) setOfficerFeed(feed);
     if (history !== null) setOfficerCallHistory(history);
-    if (channel !== null) setIncidentChannel(channel);
 
     const coreSyncOk = Boolean(q && u && (m || patrol));
     if (!coreSyncOk) {
@@ -1048,36 +1429,116 @@ export default function App() {
   useEffect(() => {
     if (!mapReady || !mapRef.current || !mapData || !mapLibRef.current) return;
     const map = mapRef.current;
-    const beatSourceId = "firstline-beats";
+    const beatAreaSourceId = "firstline-beat-areas";
     const beatFillLayerId = "firstline-beat-fill";
-    const beatLineLayerId = "firstline-beat-line";
+    const beatBorderSourceId = "firstline-beat-borders";
+    const beatBorderLayerId = "firstline-beat-border-lines";
     const beatLabelSourceId = "firstline-beat-labels";
     const beatLabelLayerId = "firstline-beat-labels-layer";
 
+    const cross = (o: [number, number], a: [number, number], b: [number, number]) =>
+      (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+
+    const buildBeatAreaRing = (beat: BeatOverlay): [number, number][] | null => {
+      const pointMap = new Map<string, [number, number]>();
+      for (const path of beat.border_paths ?? []) {
+        for (const point of path.coordinates ?? []) {
+          const key = `${point.lon.toFixed(6)}:${point.lat.toFixed(6)}`;
+          pointMap.set(key, [point.lon, point.lat]);
+        }
+      }
+      if (pointMap.size < 3 && (beat.coordinates ?? []).length >= 3) {
+        const ring = (beat.coordinates ?? []).map((point) => [point.lon, point.lat] as [number, number]);
+        if (ring.length >= 3) {
+          const [firstLon, firstLat] = ring[0];
+          const [lastLon, lastLat] = ring[ring.length - 1];
+          if (firstLon !== lastLon || firstLat !== lastLat) ring.push([firstLon, firstLat]);
+          return ring;
+        }
+      }
+      if (pointMap.size < 3) return null;
+      const points = Array.from(pointMap.values()).sort((a, b) => (a[0] === b[0] ? a[1] - b[1] : a[0] - b[0]));
+      const lower: [number, number][] = [];
+      for (const p of points) {
+        while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+        lower.push(p);
+      }
+      const upper: [number, number][] = [];
+      for (let i = points.length - 1; i >= 0; i -= 1) {
+        const p = points[i];
+        while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+        upper.push(p);
+      }
+      const hull = lower.slice(0, -1).concat(upper.slice(0, -1));
+      if (hull.length < 3) return null;
+      hull.push(hull[0]);
+      return hull;
+    };
+
     const removeBeatLayers = () => {
       if (map.getLayer(beatLabelLayerId)) map.removeLayer(beatLabelLayerId);
-      if (map.getLayer(beatLineLayerId)) map.removeLayer(beatLineLayerId);
       if (map.getLayer(beatFillLayerId)) map.removeLayer(beatFillLayerId);
+      if (map.getLayer(beatBorderLayerId)) map.removeLayer(beatBorderLayerId);
       if (map.getSource(beatLabelSourceId)) map.removeSource(beatLabelSourceId);
-      if (map.getSource(beatSourceId)) map.removeSource(beatSourceId);
+      if (map.getSource(beatAreaSourceId)) map.removeSource(beatAreaSourceId);
+      if (map.getSource(beatBorderSourceId)) map.removeSource(beatBorderSourceId);
     };
 
     if (showMapBeats && (mapData.beats ?? []).length > 0) {
-      const beatGeoJson = {
-        type: "FeatureCollection",
-        features: mapData.beats.map((beat) => {
-          const ring = beat.coordinates.map((point) => [point.lon, point.lat]);
-          if (ring.length > 0) {
+      const areaFeatures: any[] = [];
+      const borderFeatures: any[] = [];
+      for (const beat of mapData.beats) {
+        const ring = buildBeatAreaRing(beat);
+        if (ring && ring.length >= 4) {
+          areaFeatures.push({
+            type: "Feature",
+            properties: {
+              beat_id: beat.beat_id,
+              label: beat.label,
+            },
+            geometry: { type: "Polygon", coordinates: [ring] },
+          });
+        }
+        const hasRoadPaths = (beat.border_paths ?? []).length > 0;
+        for (const path of beat.border_paths ?? []) {
+          const line = (path.coordinates ?? []).map((point) => [point.lon, point.lat]);
+          if (line.length < 2) continue;
+          borderFeatures.push({
+            type: "Feature",
+            properties: {
+              beat_id: beat.beat_id,
+              label: beat.label,
+              road_name: path.name,
+            },
+            geometry: { type: "LineString", coordinates: line },
+          });
+        }
+        if (!hasRoadPaths && (beat.coordinates ?? []).length >= 2) {
+          const ring = (beat.coordinates ?? []).map((point) => [point.lon, point.lat]);
+          if (ring.length > 1) {
             const [firstLon, firstLat] = ring[0];
             const [lastLon, lastLat] = ring[ring.length - 1];
             if (firstLon !== lastLon || firstLat !== lastLat) ring.push([firstLon, firstLat]);
+            borderFeatures.push({
+              type: "Feature",
+              properties: {
+                beat_id: beat.beat_id,
+                label: beat.label,
+                road_name: "Beat Boundary",
+              },
+              geometry: { type: "LineString", coordinates: ring },
+            });
           }
-          return {
-            type: "Feature",
-            properties: { beat_id: beat.beat_id, label: beat.label },
-            geometry: { type: "Polygon", coordinates: [ring] },
-          };
-        }),
+        }
+      }
+
+      const beatAreaGeoJson = {
+        type: "FeatureCollection",
+        features: areaFeatures,
+      };
+      const beatBorderGeoJson = {
+        type: "FeatureCollection",
+        features: borderFeatures,
       };
       const beatLabelGeoJson = {
         type: "FeatureCollection",
@@ -1088,10 +1549,12 @@ export default function App() {
         })),
       };
 
-      const existingSource = map.getSource(beatSourceId) as any;
+      const existingAreaSource = map.getSource(beatAreaSourceId) as any;
+      const existingSource = map.getSource(beatBorderSourceId) as any;
       const existingLabelSource = map.getSource(beatLabelSourceId) as any;
-      if (existingSource?.setData) {
-        existingSource.setData(beatGeoJson as any);
+      if (existingAreaSource?.setData && existingSource?.setData) {
+        existingAreaSource.setData(beatAreaGeoJson as any);
+        existingSource.setData(beatBorderGeoJson as any);
         if (existingLabelSource?.setData) {
           existingLabelSource.setData(beatLabelGeoJson as any);
         } else {
@@ -1119,27 +1582,55 @@ export default function App() {
         }
       } else {
         removeBeatLayers();
-        map.addSource(beatSourceId, {
+        map.addSource(beatAreaSourceId, {
           type: "geojson",
-          data: beatGeoJson as any,
+          data: beatAreaGeoJson as any,
         });
         map.addLayer({
           id: beatFillLayerId,
           type: "fill",
-          source: beatSourceId,
+          source: beatAreaSourceId,
           paint: {
-            "fill-color": "#0f5a91",
-            "fill-opacity": 0.06,
+            "fill-color": [
+              "match",
+              ["get", "beat_id"],
+              1, "#4bc0ff",
+              2, "#4dd97a",
+              3, "#f4c15a",
+              4, "#ff8b6b",
+              5, "#8be9ff",
+              6, "#ffd36b",
+              "#54d0ff",
+            ],
+            "fill-opacity": 0.14,
           },
         });
+        map.addSource(beatBorderSourceId, {
+          type: "geojson",
+          data: beatBorderGeoJson as any,
+        });
         map.addLayer({
-          id: beatLineLayerId,
+          id: beatBorderLayerId,
           type: "line",
-          source: beatSourceId,
+          source: beatBorderSourceId,
           paint: {
-            "line-color": "#54d0ff",
-            "line-width": 3,
+            "line-color": [
+              "match",
+              ["get", "beat_id"],
+              1, "#4bc0ff",
+              2, "#4dd97a",
+              3, "#f4c15a",
+              4, "#ff8b6b",
+              5, "#8be9ff",
+              6, "#ffd36b",
+              "#54d0ff",
+            ],
+            "line-width": 4,
             "line-opacity": 0.95,
+          },
+          layout: {
+            "line-join": "round",
+            "line-cap": "round",
           },
         });
         map.addSource(beatLabelSourceId, {
@@ -1175,8 +1666,14 @@ export default function App() {
         el.className = `map-unit-marker status-${unit.status.toLowerCase().replaceAll("_", "-")}`;
         const officerShort = (unit.officer_name ?? "Unassigned").replace("Ofc. ", "");
         el.innerText = `${unit.callsign}\n${officerShort}`;
-        el.title = `${unit.callsign} · ${unit.officer_name ?? "Unassigned"} · ${unit.status} · Beat ${unit.beat ?? "N/A"}`;
-        markerRefs.current.push(new mapLibRef.current.Marker({ element: el }).setLngLat([unit.coordinates.lon, unit.coordinates.lat]).addTo(mapRef.current!));
+        el.title = `${unit.callsign} · ${unit.officer_name ?? "Unassigned"} · ${unit.status} · Beat ${unit.beat ?? "N/A"} · Click to message`;
+        el.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          openMessagingThread(unit.unit_id);
+        });
+        const marker = new mapLibRef.current.Marker({ element: el }).setLngLat([unit.coordinates.lon, unit.coordinates.lat]).addTo(mapRef.current!);
+        markerRefs.current.push(marker);
       });
     }
 
@@ -1192,7 +1689,7 @@ export default function App() {
     if (selectedIncident) {
       mapRef.current.flyTo({ center: [selectedIncident.coordinates.lon, selectedIncident.coordinates.lat], zoom: 13, speed: 0.6 });
     }
-  }, [mapData, selectedIncident, mapReady, showMapUnits, showMapIncidents, showMapBeats]);
+  }, [mapData, selectedIncident, mapReady, showMapUnits, showMapIncidents, showMapBeats, statusUnitId]);
 
   useEffect(() => {
     async function loadRisk() {
@@ -1212,7 +1709,6 @@ export default function App() {
   useEffect(() => {
     if (!selectedIncident) return;
     setReportNarrative(`Incident ${selectedIncident.incident_id}: ${incidentDispatchLabel(selectedIncident)} at ${selectedIncident.address}.`);
-    setChannelIncidentId(selectedIncident.incident_id);
     setIncidentIntel(null);
     setAiDispositionDraft(null);
     setHandoffNoteText("");
@@ -1578,11 +2074,11 @@ export default function App() {
         beats_active: number[];
         initial_calls: number;
         initial_assigned: number;
-      }>("/api/v1/intake/patrol-sim/start", {
+        }>("/api/v1/intake/patrol-sim/start", {
         method: "POST",
         body: JSON.stringify({
           clear_existing: true,
-          tick_seconds: patrolTickSeconds,
+          tick_seconds: 12,
           initial_calls: patrolInitialCalls,
           live_mode: false,
         }),
@@ -1590,7 +2086,10 @@ export default function App() {
       setBanner(
         `Patrol simulation live: ${result.dispatchable_units} dispatchable officers across beats ${result.beats_active.join(", ")}.`
       );
-      setActiveModule("unitReadiness");
+      showSimNotice(
+        `Patrol simulation started with ${result.dispatchable_units} dispatchable units. Open Unit Board or Simulation Console to monitor.`,
+        "success"
+      );
       await refreshDashboard();
     } catch (error) {
       setBanner(`Patrol simulation failed: ${(error as Error).message}`);
@@ -1612,6 +2111,7 @@ export default function App() {
         const result = await fetchJson<{
           dispatchable_units: number;
           initial_calls: number;
+          initial_assigned: number;
           max_active_calls: number;
           next_call_due_at?: string | null;
           call_types_loaded?: number;
@@ -1621,28 +2121,51 @@ export default function App() {
           body: JSON.stringify({
             clear_existing: true,
             live_mode: true,
-            tick_seconds: 6,
+            tick_seconds: 8,
             initial_calls: 6,
             logged_in_unit_id: statusUnitId || null,
-            min_call_interval_seconds: 15,
-            max_call_interval_seconds: 45,
+            min_call_interval_seconds: 30,
+            max_call_interval_seconds: 120,
             max_active_calls: 10,
-            min_call_duration_seconds: 60,
+            min_call_duration_seconds: 240,
             max_call_duration_seconds: 600,
           }),
         });
+        await fetchJsonSafe<{ advanced: boolean }>("/api/v1/intake/patrol-sim/tick", { method: "POST" });
+        const [bootstrapQueue, bootstrapUnits, bootstrapAvailability, bootstrapWorkflow, bootstrapMap] = await Promise.all([
+          fetchJsonSafe<{ incidents: IncidentSummary[] }>("/api/v1/dispatch/queue"),
+          fetchJsonSafe<{ units: UnitSummary[] }>("/api/v1/dispatch/units"),
+          fetchJsonSafe<UnitAvailabilityBoard>("/api/v1/dispatch/availability-board"),
+          fetchJsonSafe<DispatchWorkflowBoard>("/api/v1/dispatch/workflow-board?active_limit=20&resolved_limit=20"),
+          fetchJsonSafe<MapOverview>("/api/v1/map/overview"),
+        ]);
+        if (bootstrapQueue) setQueue(bootstrapQueue.incidents);
+        if (bootstrapUnits) setUnits(bootstrapUnits.units);
+        if (bootstrapAvailability) setAvailabilityBoard(bootstrapAvailability);
+        if (bootstrapWorkflow) setWorkflowBoard(bootstrapWorkflow);
+        if (bootstrapMap) {
+          setMapData(bootstrapMap);
+          setPatrolStatus(bootstrapMap.patrol_simulation ?? null);
+        }
         setShowMapUnits(true);
         setShowMapIncidents(true);
         setShowMapBeats(true);
-        setLiveSimPanelOpen(true);
+        const onlineUnitCount = bootstrapUnits?.units.length ?? result.dispatchable_units;
+        const activeQueueCount = bootstrapQueue?.incidents.length ?? result.initial_calls;
         setBanner(
-          `Live simulation active: ${result.dispatchable_units} patrol units roaming, ${result.initial_calls} active starter calls, max ${result.max_active_calls}. Call catalog ${result.call_types_loaded ?? 0} types / ${result.call_locations_loaded ?? 0} Redlands locations.`
+          `Live simulation active: ${onlineUnitCount} units online, ${activeQueueCount} active calls, ${result.initial_assigned} initially assigned, max ${result.max_active_calls}. Call catalog ${result.call_types_loaded ?? 0} types / ${result.call_locations_loaded ?? 0} Redlands locations.`
         );
-        showSimNotice(
-          `Simulation started: ${result.initial_calls} active calls and ${result.dispatchable_units} patrol units online.`,
-          "success"
-        );
-        setActiveModule(sessionRole === "Officer" ? "assignedDeck" : "queue");
+        if (onlineUnitCount <= 0) {
+          showSimNotice("Simulation started but no units loaded from API. Check API routing/port configuration.", "error", 5200);
+        } else if (activeQueueCount <= 0) {
+          showSimNotice("Simulation started but no active calls were returned. Running with empty queue.", "info");
+        } else {
+          showSimNotice(
+            `Simulation started: ${activeQueueCount} active calls and ${onlineUnitCount} officers online.`,
+            "success"
+          );
+        }
+        if (activeModule !== "mapOnly") setActiveModule("mapOnly");
       }
       await refreshDashboard();
     } catch (error) {
@@ -1663,32 +2186,6 @@ export default function App() {
       setBanner(`Stop patrol simulation failed: ${(error as Error).message}`);
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function handleRunLiveSimulationTick() {
-    if (liveSimBusy) return;
-    setLiveSimBusy(true);
-    try {
-      const result = await fetchJson<{ advanced: boolean; reason?: string; active_incidents?: number; calls_generated_this_tick?: number }>(
-        "/api/v1/intake/patrol-sim/tick",
-        { method: "POST" }
-      );
-      if (!result.advanced) {
-        setBanner(`Live simulation tick skipped: ${result.reason ?? "interval gate"}.`);
-        showSimNotice(`Tick skipped: ${result.reason ?? "interval gate"}.`, "info");
-      } else {
-        setBanner(
-          `Live simulation tick advanced. Active calls ${result.active_incidents ?? 0} · New calls this tick ${result.calls_generated_this_tick ?? 0}.`
-        );
-        showSimNotice("Live simulation tick advanced.", "info");
-      }
-      await refreshDashboard();
-    } catch (error) {
-      setBanner(`Live simulation tick failed: ${(error as Error).message}`);
-      showSimNotice(`Live simulation tick failed: ${(error as Error).message}`, "error", 5200);
-    } finally {
-      setLiveSimBusy(false);
     }
   }
 
@@ -1933,6 +2430,9 @@ export default function App() {
       setBanner(`Report ${reportId} ${decision === "APPROVE" ? "approved" : "sent back"} by supervisor.`);
       setReviewNotesByReport((prev) => ({ ...prev, [reportId]: "" }));
       await refreshDashboard();
+      if (commandReviewDraft?.report_id === reportId) {
+        await handleOpenCommandNarrative(reportId);
+      }
     } catch (error) {
       setBanner(`Review action failed: ${(error as Error).message}`);
     } finally {
@@ -1957,6 +2457,22 @@ export default function App() {
       setBanner(`Load draft failed: ${(error as Error).message}`);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleOpenCommandNarrative(reportId: string) {
+    setCommandReviewBusy(true);
+    setCommandReviewError("");
+    try {
+      const draft = await fetchJson<ReportDraftDetail>(`/api/v1/reporting/draft/${reportId}`);
+      setCommandReviewDraft(draft);
+      if (!(reviewNotesByReport[reportId] ?? "").trim() && (draft.review_notes ?? "").trim()) {
+        setReviewNotesByReport((prev) => ({ ...prev, [reportId]: draft.review_notes ?? "" }));
+      }
+    } catch (error) {
+      setCommandReviewError(`Unable to load narrative: ${(error as Error).message}`);
+    } finally {
+      setCommandReviewBusy(false);
     }
   }
 
@@ -2040,29 +2556,118 @@ export default function App() {
     setReportNarrative((prev) => `${prev.trimEnd()}${block}`);
   }
 
+  function openMessagingThread(unitId: string) {
+    if (!unitId || unitId === statusUnitId) return;
+    setMessageTarget(unitId);
+    setActiveModule("messaging");
+  }
+
+  function messageRecipientBusy(unitId: string): boolean {
+    const recipient = units.find((item) => item.unit_id === unitId);
+    if (!recipient) return false;
+    const status = String(recipient.status || "").toUpperCase();
+    return ["ON_SCENE", "EN_ROUTE", "TRANSPORT", "BUSY"].some((token) => status.includes(token));
+  }
+
+  function buildSimulatedReply(unitId: string, message: string): string {
+    const busy = messageRecipientBusy(unitId);
+    const normalized = message.toLowerCase();
+    if (busy) {
+      const delayedReplies = [
+        "Copy. Busy on a call right now, will respond when clear.",
+        "Received. On scene at the moment, stand by.",
+        "10-4. Tied up right now, will follow up shortly.",
+      ];
+      return delayedReplies[Math.floor(Math.random() * delayedReplies.length)];
+    }
+    if (normalized.includes("eta")) return "Copy. Current ETA is about 6 minutes.";
+    if (normalized.includes("arrive") || normalized.includes("scene")) return "Copy. I can take it and will update shortly.";
+    const openReplies = [
+      "Copy that. Received and understood.",
+      "10-4. Message received.",
+      "Received. I can take this.",
+      "Understood. Updating now.",
+    ];
+    return openReplies[Math.floor(Math.random() * openReplies.length)];
+  }
+
+  function scheduleSimulatedReply(unitId: string, originalMessage: string) {
+    if (!statusUnitId || !unitId || unitId === statusUnitId) return;
+    const busy = messageRecipientBusy(unitId);
+    const minDelayMs = busy ? 14000 : 3200;
+    const maxDelayMs = busy ? 46000 : 11000;
+    const delayMs = minDelayMs + Math.floor(Math.random() * (maxDelayMs - minDelayMs + 1));
+    const typingLeadMs = busy
+      ? 2800 + Math.floor(Math.random() * 2800)
+      : 900 + Math.floor(Math.random() * 1500);
+    const typingStartDelayMs = Math.max(450, delayMs - typingLeadMs);
+    const typingTimerId = window.setTimeout(() => {
+      setTypingByUnit((prev) => ({ ...prev, [unitId]: true }));
+      simulatedTypingTimersRef.current = simulatedTypingTimersRef.current.filter((id) => id !== typingTimerId);
+    }, typingStartDelayMs);
+    simulatedTypingTimersRef.current.push(typingTimerId);
+    const timerId = window.setTimeout(async () => {
+      try {
+        const body = buildSimulatedReply(unitId, originalMessage);
+        await fetchJson("/api/v1/officer/message", {
+          method: "POST",
+          body: JSON.stringify({
+            from_unit: unitId,
+            to_unit: statusUnitId,
+            body,
+            incident_id: null,
+            priority: "NORMAL",
+          }),
+        });
+        const inbox = await fetchJson<MessageInbox>(`/api/v1/officer/messages/${statusUnitId}?limit=60`);
+        setMessageInbox(inbox);
+        const replyLabel = compactUnitLabel(units.find((item) => item.unit_id === unitId) ?? { unit_id: unitId });
+        setMessageStatus(`Reply received from ${replyLabel}.`);
+      } catch {
+        // Simulated responses are best-effort and should never block core messaging.
+      } finally {
+        setTypingByUnit((prev) => {
+          if (!prev[unitId]) return prev;
+          const next = { ...prev };
+          delete next[unitId];
+          return next;
+        });
+        window.clearTimeout(typingTimerId);
+        simulatedTypingTimersRef.current = simulatedTypingTimersRef.current.filter((id) => id !== typingTimerId);
+        simulatedReplyTimersRef.current = simulatedReplyTimersRef.current.filter((id) => id !== timerId);
+      }
+    }, delayMs);
+    simulatedReplyTimersRef.current.push(timerId);
+  }
+
+  function handleMessageInputKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      void handleSendMessage();
+    }
+  }
+
   async function handleSendMessage() {
     if (!statusUnitId || !messageTarget || !messageBody.trim()) return;
     setLoading(true);
     try {
-      const incidentId = sendToIncidentChannel ? (channelIncidentId || selectedIncident?.incident_id || null) : null;
+      const outgoing = messageBody.trim();
       await fetchJson("/api/v1/officer/message", {
         method: "POST",
         body: JSON.stringify({
           from_unit: statusUnitId,
           to_unit: messageTarget,
-          body: messageBody.trim(),
-          incident_id: incidentId,
-          priority: messagePriority,
+          body: outgoing,
+          incident_id: null,
+          priority: "NORMAL",
         }),
       });
       setMessageBody("");
-      setMessageStatus(`Message sent to ${messageTarget}${incidentId ? ` on ${incidentId}` : ""}.`);
-      const [inbox, channel] = await Promise.all([
-        fetchJson<MessageInbox>(`/api/v1/officer/messages/${statusUnitId}?limit=40`),
-        incidentId ? fetchJson<IncidentChannel>(`/api/v1/officer/channel/${incidentId}?limit=10`) : Promise.resolve(null),
-      ]);
+      const targetLabel = compactUnitLabel(units.find((item) => item.unit_id === messageTarget) ?? { unit_id: messageTarget });
+      setMessageStatus(`Message sent to ${targetLabel}.`);
+      const inbox = await fetchJson<MessageInbox>(`/api/v1/officer/messages/${statusUnitId}?limit=60`);
       setMessageInbox(inbox);
-      if (channel) setIncidentChannel(channel);
+      scheduleSimulatedReply(messageTarget, outgoing);
     } catch (error) {
       setBanner(`Secure message failed: ${(error as Error).message}`);
     } finally {
@@ -2260,7 +2865,7 @@ export default function App() {
       report_summary: reportSummary,
       report_fields: parseFields(reportFields),
       evidence_links: reportEvidence,
-      channel_messages: incidentChannel?.messages ?? [],
+      channel_messages: (messageInbox?.messages ?? []).slice(0, 20),
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = window.URL.createObjectURL(blob);
@@ -2411,11 +3016,12 @@ export default function App() {
     [mapData?.units, units]
   );
   const liveWorkflowRows = useMemo(
-    () =>
-      (availabilityBoard?.unavailable_units ?? [])
-        .filter((row) => Boolean(row.incident_id))
-        .slice(0, 12),
-    [availabilityBoard]
+    () => (workflowBoard?.active_workflows ?? []).slice(0, 12),
+    [workflowBoard]
+  );
+  const liveResolvedRows = useMemo(
+    () => (workflowBoard?.resolved_workflows ?? []).slice(0, 8),
+    [workflowBoard]
   );
   const isDispatcher = sessionRole === "Dispatcher";
   const isOfficer = sessionRole === "Officer";
@@ -2439,7 +3045,16 @@ export default function App() {
     if (!unitId) return null;
     return units.find((unit) => unit.unit_id === unitId) ?? null;
   }, [incidentDetail?.incident?.assigned_unit_id, units]);
+  const statusUnit = useMemo(
+    () => units.find((unit) => unit.unit_id === statusUnitId) ?? null,
+    [units, statusUnitId]
+  );
+  const statusUnitLabel = useMemo(() => compactUnitLabel(statusUnit ?? { unit_id: statusUnitId }), [statusUnit, statusUnitId]);
   const inboxMessages = messageInbox?.messages ?? [];
+  const currentThreadReadAtByCounterpart = useMemo(
+    () => (statusUnitId ? (threadReadByUnit[statusUnitId] ?? {}) : {}),
+    [statusUnitId, threadReadByUnit]
+  );
   const conversationLastByCounterpart = useMemo(() => {
     const lookup: Record<string, MessageThread> = {};
     inboxMessages.forEach((message) => {
@@ -2450,20 +3065,38 @@ export default function App() {
     });
     return lookup;
   }, [inboxMessages, statusUnitId]);
+  const latestInboundByCounterpart = useMemo(() => {
+    const lookup: Record<string, string> = {};
+    inboxMessages.forEach((message) => {
+      if (message.to_unit !== statusUnitId || message.from_unit === statusUnitId) return;
+      const counterpart = message.from_unit;
+      if (!lookup[counterpart] || lookup[counterpart] < message.sent_at) {
+        lookup[counterpart] = message.sent_at;
+      }
+    });
+    return lookup;
+  }, [inboxMessages, statusUnitId]);
   const unreadByCounterpart = useMemo(() => {
     const lookup: Record<string, number> = {};
     inboxMessages.forEach((message) => {
       if (message.to_unit !== statusUnitId || message.from_unit === statusUnitId) return;
-      lookup[message.from_unit] = (lookup[message.from_unit] ?? 0) + 1;
+      const counterpart = message.from_unit;
+      const readAt = currentThreadReadAtByCounterpart[counterpart] ?? "";
+      if (readAt && message.sent_at <= readAt) return;
+      lookup[counterpart] = (lookup[counterpart] ?? 0) + 1;
     });
     return lookup;
-  }, [inboxMessages, statusUnitId]);
+  }, [inboxMessages, statusUnitId, currentThreadReadAtByCounterpart]);
+  const unreadThreadTotal = useMemo(
+    () => Object.values(unreadByCounterpart).reduce((sum, count) => sum + count, 0),
+    [unreadByCounterpart]
+  );
   const messagingContacts = useMemo(() => {
     const contacts = new Map<string, MessagingContact>();
     contacts.set("DISPATCH", {
       unit_id: "DISPATCH",
       display_name: "Dispatch",
-      subtitle: "Communications",
+      subtitle: "Online",
       status: "ONLINE",
       unread_count: unreadByCounterpart.DISPATCH ?? 0,
       last_message_at: conversationLastByCounterpart.DISPATCH?.sent_at ?? null,
@@ -2476,8 +3109,8 @@ export default function App() {
         const last = conversationLastByCounterpart[unit.unit_id];
         contacts.set(unit.unit_id, {
           unit_id: unit.unit_id,
-          display_name: `${unit.callsign} - ${unit.officer_name ?? "Unassigned"}`,
-          subtitle: `${unit.role} · ${unit.status}`,
+          display_name: compactUnitLabel(unit),
+          subtitle: normalizeStatusLabel(unit.status),
           status: unit.status,
           unread_count: unreadByCounterpart[unit.unit_id] ?? 0,
           last_message_at: last?.sent_at ?? null,
@@ -2490,8 +3123,8 @@ export default function App() {
       const last = conversationLastByCounterpart[counterpart];
       contacts.set(counterpart, {
         unit_id: counterpart,
-        display_name: counterpart,
-        subtitle: "Recent contact",
+        display_name: compactUnitLabel({ unit_id: counterpart }),
+        subtitle: "Unknown",
         status: "UNKNOWN",
         unread_count: unreadByCounterpart[counterpart] ?? 0,
         last_message_at: last?.sent_at ?? null,
@@ -2505,31 +3138,159 @@ export default function App() {
       return a.display_name.localeCompare(b.display_name);
     });
   }, [units, statusUnitId, unreadByCounterpart, conversationLastByCounterpart]);
-  const filteredMessagingContacts = useMemo(() => {
-    const query = messageContactSearch.trim().toLowerCase();
-    if (!query) return messagingContacts;
-    return messagingContacts.filter(
-      (contact) =>
-        contact.display_name.toLowerCase().includes(query) ||
-        contact.subtitle.toLowerCase().includes(query) ||
-        contact.unit_id.toLowerCase().includes(query)
-    );
-  }, [messagingContacts, messageContactSearch]);
   const activeMessagingContact = useMemo(
     () => messagingContacts.find((contact) => contact.unit_id === messageTarget) ?? null,
     [messagingContacts, messageTarget]
   );
+  const activeMessagingUnit = useMemo(
+    () => units.find((unit) => unit.unit_id === messageTarget) ?? null,
+    [units, messageTarget]
+  );
+  const activeContactTyping = Boolean(messageTarget && typingByUnit[messageTarget]);
+  const messageThreadQuery = messageThreadSearch.trim().toLowerCase();
+  const filteredMessagingThreads = useMemo(
+    () =>
+      messagingContacts.filter((contact) => {
+        if (!messageThreadQuery) return true;
+        return (
+          contact.display_name.toLowerCase().includes(messageThreadQuery) ||
+          contact.unit_id.toLowerCase().includes(messageThreadQuery) ||
+          contact.status.toLowerCase().includes(messageThreadQuery) ||
+          contact.subtitle.toLowerCase().includes(messageThreadQuery)
+        );
+      }),
+    [messagingContacts, messageThreadQuery]
+  );
   const directConversation = useMemo(
     () =>
       inboxMessages
-        .filter((message) => {
-          if (!messageTarget) return false;
-          const outbound = message.from_unit === statusUnitId && message.to_unit === messageTarget;
-          const inbound = message.to_unit === statusUnitId && message.from_unit === messageTarget;
-          return outbound || inbound;
-        })
+        .filter(
+          (message) =>
+            (message.from_unit === statusUnitId && message.to_unit === messageTarget) ||
+            (message.to_unit === statusUnitId && message.from_unit === messageTarget)
+        )
         .sort((a, b) => a.sent_at.localeCompare(b.sent_at)),
     [inboxMessages, statusUnitId, messageTarget]
+  );
+  const statusBoardRows = useMemo(() => {
+    const activeByUnit = new Map<string, DispatchWorkflowRow>();
+    (workflowBoard?.active_workflows ?? []).forEach((row) => {
+      if (!row.assigned_unit_id) return;
+      if (!activeByUnit.has(row.assigned_unit_id)) activeByUnit.set(row.assigned_unit_id, row);
+    });
+    const rows: Array<{
+      unit_id: string;
+      callsign: string;
+      status: string;
+      status_short: string;
+      elapsed: string;
+      event_no: string;
+      call_label: string;
+      location: string;
+      comment: string;
+      incident_id?: string | null;
+      tone: "available" | "enroute" | "busy" | "offduty" | "other";
+    }> = [];
+    const combined = [
+      ...(availabilityBoard?.available_units ?? []),
+      ...(availabilityBoard?.unavailable_units ?? []),
+    ];
+    combined.forEach((unit) => {
+      const workflow = activeByUnit.get(unit.unit_id);
+      const statusRaw = String(unit.status_code ?? "UNKNOWN").toUpperCase();
+      const short = shortStatusCode(statusRaw);
+      const clock = unitStatusClocks[unit.unit_id];
+      const elapsedSeconds = clock ? Math.max(0, Math.floor((simClockNowMs - clock.sinceMs) / 1000)) : 0;
+      const incidentId = "incident_id" in unit ? unit.incident_id ?? null : null;
+      const eventNo = incidentId ? incidentId.split("-").pop() ?? incidentId : "----";
+      const callLabel =
+        workflow?.call_display ||
+        ("call_display" in unit ? (unit.call_display ?? "") : "") ||
+        ("call_type" in unit ? unit.call_type : "") ||
+        (statusRaw.includes("AVAILABLE") ? "PATROL" : "UNASSIGNED");
+      let tone: "available" | "enroute" | "busy" | "offduty" | "other" = "other";
+      if (short === "AV") tone = "available";
+      else if (short === "EN") tone = "enroute";
+      else if (short === "OD") tone = "offduty";
+      else if (["SC", "BU", "TR"].includes(short)) tone = "busy";
+      rows.push({
+        unit_id: unit.unit_id,
+        callsign: unit.callsign,
+        status: statusRaw,
+        status_short: short,
+        elapsed: formatClockDuration(elapsedSeconds),
+        event_no: eventNo,
+        call_label: callLabel,
+        location: unit.current_location,
+        comment: unit.dispatch_note,
+        incident_id: incidentId,
+        tone,
+      });
+    });
+    const callsignRank = (callsign: string) => {
+      const digits = callsign.match(/\d+/g)?.join("") ?? "";
+      return digits ? Number(digits) : Number.MAX_SAFE_INTEGER;
+    };
+    rows.sort((a, b) => {
+      const rankDelta = callsignRank(a.callsign) - callsignRank(b.callsign);
+      if (rankDelta !== 0) return rankDelta;
+      return a.callsign.localeCompare(b.callsign);
+    });
+    return rows;
+  }, [availabilityBoard, workflowBoard, unitStatusClocks, simClockNowMs]);
+  const statusBoardSearchQuery = statusBoardSearch.trim().toLowerCase();
+  const filteredStatusBoardRows = useMemo(
+    () =>
+      statusBoardRows.filter((row) => {
+        const toneMatch = statusBoardToneFilter === "ALL" || row.tone === statusBoardToneFilter;
+        const searchMatch =
+          !statusBoardSearchQuery ||
+          row.callsign.toLowerCase().includes(statusBoardSearchQuery) ||
+          row.call_label.toLowerCase().includes(statusBoardSearchQuery) ||
+          row.location.toLowerCase().includes(statusBoardSearchQuery) ||
+          row.comment.toLowerCase().includes(statusBoardSearchQuery) ||
+          row.event_no.toLowerCase().includes(statusBoardSearchQuery);
+        return toneMatch && searchMatch;
+      }),
+    [statusBoardRows, statusBoardToneFilter, statusBoardSearchQuery]
+  );
+  const commandReportSearchQuery = commandReportSearch.trim().toLowerCase();
+  const commandCallSearchQuery = commandCallSearch.trim().toLowerCase();
+  const filteredCommandCalls = useMemo(
+    () =>
+      (commandCallHistory?.calls ?? []).filter((item) => {
+        if (!commandCallSearchQuery) return true;
+        const haystack = [
+          item.incident_id,
+          item.call_display,
+          item.call_type,
+          item.address,
+          item.assigned_callsign ?? "",
+          item.assigned_officer ?? "",
+          item.handling_unit_label ?? "",
+          item.disposition_code ?? "",
+          item.disposition_summary ?? "",
+        ]
+          .join(" ")
+          .toLowerCase();
+        return haystack.includes(commandCallSearchQuery);
+      }),
+    [commandCallHistory, commandCallSearchQuery]
+  );
+  const filteredCommandReports = useMemo(
+    () =>
+      (commandReports?.reports ?? []).filter((item) => {
+        const reviewStatus = (item.review_status ?? "PENDING").toUpperCase();
+        const reviewMatch = commandReportReviewFilter === "ALL" || reviewStatus === commandReportReviewFilter;
+        const searchMatch =
+          !commandReportSearchQuery ||
+          item.report_id.toLowerCase().includes(commandReportSearchQuery) ||
+          item.incident_id.toLowerCase().includes(commandReportSearchQuery) ||
+          item.unit_id.toLowerCase().includes(commandReportSearchQuery) ||
+          item.narrative_preview.toLowerCase().includes(commandReportSearchQuery);
+        return reviewMatch && searchMatch;
+      }),
+    [commandReports, commandReportReviewFilter, commandReportSearchQuery]
   );
   const moduleCounts: Partial<Record<ModulePanel, number>> = {
     queue: filteredQueue.length,
@@ -2539,9 +3300,11 @@ export default function App() {
     reportHub: reportHub?.drafts.length,
     policyHub: policyResults?.result_count,
     codeHub: codeResults?.result_count,
+    commandReports: commandReports?.pending_review_count,
+    commandCallHistory: commandCallHistory?.call_count,
     reviewQueue: reviewQueue?.review_count,
     reportingMetrics: reportingMetrics?.changes_requested,
-    messaging: messageInbox?.unread_estimate,
+    messaging: unreadThreadTotal,
     unitReadiness: availabilityBoard?.summary.unavailable_count,
   };
   const moduleGroups: Array<{ id: ModuleGroupId; label: string; description: string; icon: string }> = [
@@ -2576,12 +3339,16 @@ export default function App() {
     { id: "policyHub", label: "Policy Hub", icon: "POL", iconStyle: "policyBook", group: "intel", visible: canIntelModules, badge: moduleCounts.policyHub },
     { id: "codeHub", label: "Code Hub", icon: "TXT", iconStyle: "codeBook", group: "intel", visible: canIntelModules, badge: moduleCounts.codeHub },
     { id: "commandDash", label: "Command", icon: "CMD", group: "command", visible: canDispatchModules },
+    { id: "commandReports", label: "Command Reports", icon: "REV", group: "command", visible: canDispatchModules, badge: moduleCounts.commandReports },
+    { id: "commandCallHistory", label: "Shift Call History", icon: "HIS", group: "command", visible: canDispatchModules, badge: moduleCounts.commandCallHistory },
     { id: "opTrends", label: "Trends", icon: "TRD", group: "command", visible: canDispatchModules },
     { id: "aiOps", label: "AI Ops", icon: "AI", group: "command", visible: canDispatchModules },
     { id: "hotkeys", label: "Hotkeys", icon: "HK", group: "system", visible: true },
   ];
   const rightColumnModules: ModulePanel[] = [
     "commandDash",
+    "commandReports",
+    "commandCallHistory",
     "unitReadiness",
     "opTrends",
     "reviewQueue",
@@ -2608,6 +3375,20 @@ export default function App() {
   const groupedVisibleModules = moduleGroups
     .map((group) => ({ ...group, items: visibleModuleButtons.filter((item) => item.group === group.id) }))
     .filter((group) => group.items.length > 0);
+  const sideRailModuleButtons = useMemo(() => {
+    const preferred: ModulePanel[] = isOfficer
+      ? ["mapOnly", "assignedDeck", "callHistory", "reportHub", "disposition", "messaging", "policyHub"]
+      : ["mapOnly", "queue", "unitReadiness", "commandDash", "commandCallHistory", "commandReports", "messaging"];
+    const visibleById = new Map(visibleModuleButtons.map((item) => [item.id, item] as const));
+    const ordered = preferred
+      .map((id) => visibleById.get(id))
+      .filter((item): item is ModuleButton => Boolean(item));
+    const known = new Set(ordered.map((item) => item.id));
+    const fallback = visibleModuleButtons
+      .filter((item) => !known.has(item.id))
+      .slice(0, 1);
+    return [...ordered, ...fallback].slice(0, 7);
+  }, [visibleModuleButtons, isOfficer]);
   const activeModuleMeta = moduleButtons.find((item) => item.id === activeModule);
   const commandPaletteItems = [
     {
@@ -2674,16 +3455,126 @@ export default function App() {
   const activeModuleGroup = moduleButtons.find((item) => item.id === activeModule)?.group;
 
   useEffect(() => {
+    function onQuickNav(event: KeyboardEvent) {
+      if (!started || !event.altKey || event.ctrlKey || event.metaKey) return;
+      const activeTag = document.activeElement?.tagName;
+      if (activeTag === "INPUT" || activeTag === "TEXTAREA" || activeTag === "SELECT") return;
+
+      const lower = event.key.toLowerCase();
+      const openIfVisible = (target: ModulePanel) => {
+        const isVisible = moduleButtons.some((item) => item.id === target && item.visible);
+        if (!isVisible) return;
+        setActiveModule(target);
+      };
+
+      if (lower === "1") {
+        event.preventDefault();
+        setActiveModule("mapOnly");
+      } else if (lower === "2") {
+        event.preventDefault();
+        if (canDispatchModules) openIfVisible("queue");
+        else openIfVisible("assignedDeck");
+      } else if (lower === "3") {
+        event.preventDefault();
+        openIfVisible("reportHub");
+      } else if (lower === "4") {
+        event.preventDefault();
+        openIfVisible("intelHub");
+      } else if (lower === "m") {
+        event.preventDefault();
+        openIfVisible("messaging");
+      } else if (lower === "u") {
+        event.preventDefault();
+        openIfVisible("unitReadiness");
+      } else if (lower === "q") {
+        event.preventDefault();
+        openIfVisible("queue");
+      }
+    }
+
+    window.addEventListener("keydown", onQuickNav);
+    return () => window.removeEventListener("keydown", onQuickNav);
+  }, [started, canDispatchModules, moduleButtons]);
+
+  useEffect(() => {
     if (!activeModuleGroup) return;
     setOpenModuleGroups((prev) => (prev[activeModuleGroup] ? prev : { ...prev, [activeModuleGroup]: true }));
   }, [activeModuleGroup]);
 
   useEffect(() => {
-    if (messagingContacts.length === 0) return;
-    if (!messagingContacts.some((contact) => contact.unit_id === messageTarget)) {
-      setMessageTarget(messagingContacts[0].unit_id);
+    if (activeModule !== "mapOnly") setModuleDockOpen(false);
+  }, [activeModule]);
+
+  useEffect(() => {
+    if (!mapFocusMode) return;
+    setModuleDockOpen(false);
+    setStatusDetailsOpen(false);
+  }, [mapFocusMode]);
+
+  useEffect(() => {
+    if (!statusUnitId || !messageTarget) return;
+    setMessageTargetByUnit((prev) => (prev[statusUnitId] === messageTarget ? prev : { ...prev, [statusUnitId]: messageTarget }));
+  }, [statusUnitId, messageTarget]);
+
+  useEffect(() => {
+    if (!statusUnitId || messagingContacts.length === 0) return;
+    const preferredTarget = messageTargetByUnit[statusUnitId];
+    if (!preferredTarget || preferredTarget === messageTarget) return;
+    if (messagingContacts.some((contact) => contact.unit_id === preferredTarget)) {
+      setMessageTarget(preferredTarget);
     }
-  }, [messagingContacts, messageTarget]);
+  }, [statusUnitId, messagingContacts, messageTargetByUnit, messageTarget]);
+
+  useEffect(() => {
+    if (messagingContacts.length === 0) return;
+    if (messagingContacts.some((contact) => contact.unit_id === messageTarget)) return;
+    const preferredTarget = statusUnitId ? messageTargetByUnit[statusUnitId] : undefined;
+    if (preferredTarget && messagingContacts.some((contact) => contact.unit_id === preferredTarget)) {
+      setMessageTarget(preferredTarget);
+      return;
+    }
+    setMessageTarget(messagingContacts[0].unit_id);
+  }, [messagingContacts, messageTarget, statusUnitId, messageTargetByUnit]);
+
+  useEffect(() => {
+    if (activeModule !== "messaging" || !statusUnitId || !messageTarget) return;
+    const latestInbound = latestInboundByCounterpart[messageTarget];
+    if (!latestInbound) return;
+    setThreadReadByUnit((prev) => {
+      const unitMarks = prev[statusUnitId] ?? {};
+      const existing = unitMarks[messageTarget] ?? "";
+      if (existing >= latestInbound) return prev;
+      return {
+        ...prev,
+        [statusUnitId]: {
+          ...unitMarks,
+          [messageTarget]: latestInbound,
+        },
+      };
+    });
+  }, [activeModule, statusUnitId, messageTarget, latestInboundByCounterpart]);
+
+  useEffect(() => {
+    if (activeModule !== "messaging") return;
+    const threadList = messageThreadListRef.current;
+    if (!threadList) return;
+    threadList.scrollTop = threadList.scrollHeight;
+  }, [activeModule, messageTarget, directConversation.length]);
+
+  useEffect(() => {
+    if (!messageStatus) return;
+    if (messageStatusTimerRef.current) window.clearTimeout(messageStatusTimerRef.current);
+    messageStatusTimerRef.current = window.setTimeout(() => {
+      setMessageStatus("");
+      messageStatusTimerRef.current = null;
+    }, 4200);
+    return () => {
+      if (messageStatusTimerRef.current) {
+        window.clearTimeout(messageStatusTimerRef.current);
+        messageStatusTimerRef.current = null;
+      }
+    };
+  }, [messageStatus]);
 
   useEffect(() => {
     if (!mapRef.current) return;
@@ -2698,10 +3589,41 @@ export default function App() {
   }, [activeModule, mapFocusMode, rightColumnActive]);
 
   useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    if (activeModule !== "mapOnly") {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [activeModule]);
+
+  useEffect(() => {
+    if (activeModule === "mapOnly") return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setActiveModule("mapOnly");
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [activeModule]);
+
+  useEffect(() => {
     const visibleModules = moduleButtons.filter((item) => item.visible).map((item) => item.id);
     if (visibleModules.length === 0) return;
     if (!visibleModules.includes(activeModule)) setActiveModule(visibleModules[0]);
   }, [viewMode, sessionRole, activeModule]);
+
+  useEffect(() => {
+    if (activeModule !== "commandReports") {
+      setCommandReviewDraft(null);
+      setCommandReviewError("");
+    }
+  }, [activeModule]);
 
   if (!started) {
     return (
@@ -2763,12 +3685,12 @@ export default function App() {
           onClick={() => setLiveSimPanelOpen((prev) => !prev)}
           disabled={liveSimBusy}
         >
-          {liveSimPanelOpen ? "Hide Console" : "Open Console"}
+          {liveSimPanelOpen ? "Hide Sim Monitor" : "Open Sim Monitor"}
         </button>
         <div className="live-sim-meta">
-          <strong>{liveSimulationRunning ? "LIVE DEV RUNNING" : "Simulation Offline"}</strong>
+          <strong>{liveSimulationRunning ? "Simulation Running" : "Simulation Offline"}</strong>
           <p>
-            Patrol units: {patrolStatus?.dispatchable_units ?? 0} · Active calls: {liveActiveCalls}/{patrolStatus?.max_active_calls ?? 10} · Tick {patrolStatus?.tick_index ?? 0} · Runtime {liveRuntimeLabel}
+            Patrol units: {patrolStatus?.dispatchable_units ?? 0} · Active calls: {liveActiveCalls}/{patrolStatus?.max_active_calls ?? 10} · Runtime {liveRuntimeLabel}
           </p>
         </div>
       </section>
@@ -2785,8 +3707,8 @@ export default function App() {
               <button type="button" onClick={handleToggleLiveSimulation} disabled={liveSimBusy}>
                 {liveSimBusy ? "Working..." : liveSimulationRunning ? "Stop Live Simulation" : "Start Live Simulation"}
               </button>
-              <button type="button" onClick={handleRunLiveSimulationTick} disabled={liveSimBusy || !patrolStatus?.enabled}>
-                Force Tick
+              <button type="button" onClick={() => setLiveSimPanelOpen(false)}>
+                Close Monitor
               </button>
             </div>
           </div>
@@ -2802,14 +3724,20 @@ export default function App() {
           </div>
           <div className="live-sim-workflow">
             <h3>Dispatch Workflow (Commander Tracking)</h3>
+            {workflowBoard ? (
+              <div className="dispatch-banner">
+                Total {workflowBoard.summary.total_calls} · Active {workflowBoard.summary.active_calls} · Queued {workflowBoard.summary.queued_calls} · Assigned {workflowBoard.summary.assigned_calls} · On Scene {workflowBoard.summary.on_scene_calls} · Resolved {workflowBoard.summary.resolved_calls}
+              </div>
+            ) : null}
             <div className="timeline-list">
               {liveWorkflowRows.map((row) => (
-                <div key={`${row.unit_id}-${row.incident_id}`} className="timeline-item">
+                <div key={row.incident_id} className="timeline-item">
                   <strong>{row.incident_id} · {row.call_display || row.call_type}</strong>
                   <p>
-                    {row.callsign} · {row.officer_name} · {row.incident_status}
+                    {row.assigned_callsign ?? "Awaiting assignment"} · {row.assigned_officer ?? "Dispatch pending"} · {row.status} · {row.phase}
                   </p>
-                  <p>{row.current_location}</p>
+                  <p>{row.address}</p>
+                  <p>P{row.priority} · Elapsed {row.elapsed_minutes}m</p>
                 </div>
               ))}
               {liveWorkflowRows.length === 0 ? (
@@ -2817,6 +3745,19 @@ export default function App() {
                   No active dispatch workflows yet. Start simulation and refresh.
                 </div>
               ) : null}
+            </div>
+          </div>
+          <div className="live-sim-workflow">
+            <h3>Recently Resolved</h3>
+            <div className="timeline-list">
+              {liveResolvedRows.map((row) => (
+                <div key={`${row.incident_id}-resolved`} className="timeline-item">
+                  <strong>{row.incident_id} · {row.call_display || row.call_type}</strong>
+                  <p>{row.assigned_callsign ?? row.assigned_unit_id ?? "Unknown unit"} · {row.disposition_code ?? "CLOSED"}</p>
+                  <p>{row.disposition_summary ?? "Disposition recorded."}</p>
+                </div>
+              ))}
+              {liveResolvedRows.length === 0 ? <div className="dispatch-banner">No resolved calls yet in this run.</div> : null}
             </div>
           </div>
           <div className="live-sim-roster">
@@ -2843,90 +3784,179 @@ export default function App() {
           </div>
         </section>
       ) : null}
-
-      <div className="chip-row">
-        {activeModule === "mapOnly" ? <span className="chip ok">Map-only workspace active</span> : null}
-        <span className="chip">Traffic: {mapData?.traffic_overlay ?? "n/a"}</span>
-        <span className={`chip ${patrolStatus?.enabled ? "ok" : ""}`}>
-          Patrol: {patrolStatus?.enabled ? `${patrolStatus.profile} · Tick ${patrolStatus.tick_index}` : "OFF"}
-        </span>
-        <span className="chip">Calls: {patrolStatus?.active_incidents ?? 0}/{patrolStatus?.max_active_calls ?? 10}</span>
-        <span className="chip">Units Avail: {availabilityBoard?.summary.available_count ?? 0}</span>
-        <span className="chip">Units Busy: {availabilityBoard?.summary.unavailable_count ?? 0}</span>
-        {canReportModules ? <span className="chip">Review Queue: {reviewQueue?.review_count ?? 0}</span> : null}
-      </div>
-
-      {activeModule !== "mapOnly" ? (
-        <div className="active-module-row">
-          <span className="chip">Open Module: {activeModuleMeta?.label ?? activeModule}</span>
-          <button type="button" className="dispatch-secondary" onClick={() => setActiveModule("mapOnly")}>
-            X Close Module
+      {!mapFocusMode ? (
+        <aside className="side-tab-rail" aria-label="Module tabs">
+          {activeModule !== "mapOnly" ? (
+            <button
+              type="button"
+              className="side-tab side-tab-close"
+              title="Close open module"
+              aria-label="Close open module"
+              onClick={() => {
+                setActiveModule("mapOnly");
+                setModuleDockOpen(false);
+              }}
+            >
+              <span className="side-tab-icon">X</span>
+            </button>
+          ) : null}
+          {sideRailModuleButtons.map((item) => (
+            <button
+              key={`side-tab-${item.id}`}
+              type="button"
+              className={`side-tab ${activeModule === item.id ? "active" : ""}`}
+              title={item.label}
+              aria-label={item.label}
+              onClick={() => {
+                if (item.id === "mapOnly" && activeModule === "mapOnly") return;
+                if (item.id === activeModule) {
+                  setActiveModule("mapOnly");
+                } else {
+                  setActiveModule(item.id);
+                }
+                setModuleDockOpen(false);
+              }}
+            >
+              <span className={`side-tab-icon ${item.iconStyle === "policyBook" ? "policy-book" : item.iconStyle === "codeBook" ? "code-book" : ""}`}>
+                {item.icon}
+              </span>
+            </button>
+          ))}
+          <button
+            type="button"
+            className={`side-tab ${moduleDockOpen ? "active" : ""}`}
+            title="All modules"
+            aria-label="All modules"
+            onClick={() => setModuleDockOpen((prev) => !prev)}
+          >
+            <span className="side-tab-icon">ALL</span>
           </button>
-        </div>
+        </aside>
       ) : null}
 
-      <section className="module-dock">
-        <div className="module-dock-head">
-          <input
-            className="module-search"
-            value={moduleSearch}
-            onChange={(e) => setModuleSearch(e.target.value)}
-            placeholder="Find module or hub..."
-          />
-          <p className="module-dock-note">
-            Modules are grouped by workflow. Expand a group, then pick a hub.
-          </p>
+      <section className="status-strip">
+        <div className="status-strip-core">
+          <span className={`chip ${patrolStatus?.enabled ? "ok" : ""}`}>
+            Patrol: {patrolStatus?.enabled ? `${patrolStatus.profile}` : "OFF"}
+          </span>
+          <span className="chip">Active Calls: {patrolStatus?.active_incidents ?? 0}/{patrolStatus?.max_active_calls ?? 10}</span>
+          <span className="chip">Units Online: {patrolStatus?.dispatchable_units ?? 0}</span>
         </div>
-        <div className="module-groups">
-          {groupedVisibleModules.map((group) => {
-            const searchOpen = Boolean(moduleSearchQuery);
-            const groupOpen = searchOpen || openModuleGroups[group.id];
-            return (
-              <section key={group.id} className="module-group">
-                <button
-                  type="button"
-                  className={`module-group-toggle ${groupOpen ? "open" : ""}`}
-                  onClick={() =>
-                    setOpenModuleGroups((prev) => ({
-                      ...prev,
-                      [group.id]: searchOpen ? true : !groupOpen,
-                    }))
-                  }
-                >
-                  <span className="module-group-icon">{group.icon}</span>
-                  <span className="module-group-copy">
-                    <strong>{group.label}</strong>
-                    <span>{group.description}</span>
-                  </span>
-                  <span className="module-group-count">{group.items.length}</span>
-                </button>
-                {groupOpen ? (
-                  <div className="module-submenu">
-                    {group.items.map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        className={`module-btn ${activeModule === item.id ? "active" : ""}`}
-                        onClick={() => {
-                          setActiveModule(item.id);
-                          setOpenModuleGroups((prev) => ({ ...prev, [group.id]: true }));
-                        }}
-                      >
-                        <span className={`module-icon ${item.iconStyle === "policyBook" ? "policy-book" : item.iconStyle === "codeBook" ? "code-book" : ""}`}>
-                          {item.icon}
-                        </span>
-                        {item.label}
-                        {typeof item.badge === "number" ? <span className="module-count">{item.badge}</span> : null}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </section>
-            );
-          })}
+        <div className="status-strip-actions">
+          <button type="button" className="dispatch-secondary" onClick={() => setStatusDetailsOpen((prev) => !prev)}>
+            {statusDetailsOpen ? "Hide Status Detail" : "Status Detail"}
+          </button>
+          {activeModule !== "mapOnly" ? (
+            <button type="button" className="dispatch-secondary" onClick={() => setActiveModule("mapOnly")}>
+              Back to Map
+            </button>
+          ) : null}
         </div>
-        {groupedVisibleModules.length === 0 ? <span className="chip">No module matches filter.</span> : null}
       </section>
+
+      {statusDetailsOpen ? (
+        <div className="chip-row">
+          {activeModule === "mapOnly" ? <span className="chip ok">Map-only workspace active</span> : null}
+          <span className="chip">Traffic: {mapData?.traffic_overlay ?? "n/a"}</span>
+          <span className="chip">Units Avail: {availabilityBoard?.summary.available_count ?? 0}</span>
+          <span className="chip">Units Busy: {availabilityBoard?.summary.unavailable_count ?? 0}</span>
+          {canReportModules ? <span className="chip">Review Queue: {reviewQueue?.review_count ?? 0}</span> : null}
+          {activeModule !== "mapOnly" ? <span className="chip">Open Module: {activeModuleMeta?.label ?? activeModule}</span> : null}
+        </div>
+      ) : null}
+      {activeModule !== "mapOnly" ? (
+        <section className="active-module-row floating">
+          <div className="status-strip-core">
+            <span className="chip ok">Open: {activeModuleMeta?.label ?? activeModule}</span>
+            <span className="chip">Esc to close</span>
+          </div>
+          <div className="status-strip-actions">
+            <button type="button" className="dispatch-secondary" onClick={() => setModuleDockOpen((prev) => !prev)}>
+              {moduleDockOpen ? "Hide Modules" : "Show Modules"}
+            </button>
+            <button type="button" className="dispatch-secondary" onClick={() => setActiveModule("mapOnly")}>
+              Close Module
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {!mapFocusMode && moduleDockOpen ? (
+        <section className="module-dock-shell">
+          <div className="module-dock-toolbar">
+            <button
+              type="button"
+              className="dispatch-secondary active"
+              onClick={() => setModuleDockOpen(false)}
+            >
+              Close Module Launcher
+            </button>
+            <p className="module-dock-note">
+              Modules are grouped by workflow. Expand a group, then pick a hub.
+            </p>
+          </div>
+          <section className="module-dock">
+            <div className="module-dock-head">
+              <input
+                className="module-search"
+                value={moduleSearch}
+                onChange={(e) => setModuleSearch(e.target.value)}
+                placeholder="Find module or hub..."
+              />
+            </div>
+            <div className="module-groups">
+              {groupedVisibleModules.map((group) => {
+                const searchOpen = Boolean(moduleSearchQuery);
+                const groupOpen = searchOpen || openModuleGroups[group.id];
+                return (
+                  <section key={group.id} className="module-group">
+                    <button
+                      type="button"
+                      className={`module-group-toggle ${groupOpen ? "open" : ""}`}
+                      onClick={() =>
+                        setOpenModuleGroups((prev) => ({
+                          ...prev,
+                          [group.id]: searchOpen ? true : !groupOpen,
+                        }))
+                      }
+                    >
+                      <span className="module-group-icon">{group.icon}</span>
+                      <span className="module-group-copy">
+                        <strong>{group.label}</strong>
+                        <span>{group.description}</span>
+                      </span>
+                      <span className="module-group-count">{group.items.length}</span>
+                    </button>
+                    {groupOpen ? (
+                      <div className="module-submenu">
+                        {group.items.map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            className={`module-btn ${activeModule === item.id ? "active" : ""}`}
+                            onClick={() => {
+                              setActiveModule(item.id);
+                              setModuleDockOpen(false);
+                              setOpenModuleGroups((prev) => ({ ...prev, [group.id]: true }));
+                            }}
+                          >
+                            <span className={`module-icon ${item.iconStyle === "policyBook" ? "policy-book" : item.iconStyle === "codeBook" ? "code-book" : ""}`}>
+                              {item.icon}
+                            </span>
+                            {item.label}
+                            {typeof item.badge === "number" ? <span className="module-count">{item.badge}</span> : null}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </section>
+                );
+              })}
+            </div>
+            {groupedVisibleModules.length === 0 ? <span className="chip">No module matches filter.</span> : null}
+          </section>
+        </section>
+      ) : null}
 
       <main className={`layout ${rightColumnActive ? "" : "map-focus"}`.trim()}>
         <section className="main-column">
@@ -2997,16 +4027,6 @@ export default function App() {
               </button>
             </div>
             <div className="template-row">
-              <label className="form-field">
-                Patrol Tick Seconds
-                <input
-                  type="number"
-                  min={5}
-                  max={60}
-                  value={patrolTickSeconds}
-                  onChange={(e) => setPatrolTickSeconds(Math.max(5, Math.min(60, Number(e.target.value) || 12)))}
-                />
-              </label>
               <label className="form-field">
                 Initial Calls
                 <input
@@ -3107,9 +4127,46 @@ export default function App() {
             <div className="dispatch-form-grid">
               <label className="form-field">Status Filter<select value={queueStatusFilter} onChange={(e) => setQueueStatusFilter(e.target.value)}><option value="ALL">ALL</option><option value="NEW">NEW</option><option value="DISPATCHED">DISPATCHED</option><option value="EN_ROUTE">EN_ROUTE</option><option value="ON_SCENE">ON_SCENE</option><option value="TRANSPORT">TRANSPORT</option><option value="CLOSED">CLOSED</option></select></label>
               <label className="form-field">Min Priority<input type="number" min={0} max={100} value={queuePriorityFloor} onChange={(e) => setQueuePriorityFloor(Number(e.target.value) || 0)} /></label>
+              <label className="form-field">
+                Sort
+                <select value={queueSortMode} onChange={(e) => setQueueSortMode(e.target.value)}>
+                  <option value="PRIORITY_DESC">Priority High-Low</option>
+                  <option value="PRIORITY_ASC">Priority Low-High</option>
+                  <option value="STATUS">Status Workflow</option>
+                  <option value="INCIDENT">Incident ID</option>
+                </select>
+              </label>
+              <label className="form-field wide">
+                Search
+                <input
+                  value={queueSearch}
+                  onChange={(e) => setQueueSearch(e.target.value)}
+                  placeholder="Incident ID, address, or call type..."
+                />
+              </label>
+            </div>
+            <div className="status-strip-actions inline-controls">
+              <span className="chip">Showing {filteredQueue.length} of {queue.length} calls</span>
+              <button
+                type="button"
+                className="dispatch-secondary"
+                onClick={() => {
+                  setQueueStatusFilter("ALL");
+                  setQueuePriorityFloor(0);
+                  setQueueSearch("");
+                  setQueueSortMode("PRIORITY_DESC");
+                }}
+              >
+                Clear Filters
+              </button>
             </div>
             {filteredQueue.map((incident) => (
-              <button key={incident.incident_id} type="button" className="list-row" onClick={() => setSelectedIncidentId(incident.incident_id)}>
+              <button
+                key={incident.incident_id}
+                type="button"
+                className={`list-row ${selectedIncidentId === incident.incident_id ? "active" : ""}`}
+                onClick={() => setSelectedIncidentId(incident.incident_id)}
+              >
                 <div><strong>{incident.incident_id} - {incidentDispatchLabel(incident)}</strong><p>{incident.address}</p></div>
                 <div className="queue-meta"><span className="badge">P{incident.priority}</span><span className="badge soft">{incident.status}</span></div>
               </button>
@@ -3697,7 +4754,7 @@ export default function App() {
 
         {rightColumnActive ? <aside className="right-column">
           {activeModule === "commandDash" ? (
-          <article className="card panel">
+          <article className="card panel module-overlay">
             <h2>Command Dashboard</h2>
             <div className="dev-actions"><button type="button" onClick={handleExportExecutiveBrief} disabled={loading}>Export Executive Brief</button></div>
             <div className="kpi-grid">
@@ -3706,66 +4763,422 @@ export default function App() {
               <div className="kpi"><span>Units Available</span><strong>{command?.units_available ?? 0}</strong></div>
               <div className="kpi"><span>Avg ETA</span><strong>{command?.average_response_minutes ?? 0}m</strong></div>
             </div>
+            <div className="hub-row">
+              <strong>Operational Pulse</strong>
+              <p>
+                Incidents {signed(commandTrends?.metrics.active_incidents.change ?? 0)} ·
+                Pending {signed(commandTrends?.metrics.pending_calls.change ?? 0)} ·
+                Busy Units {signed(commandTrends?.metrics.units_busy.change ?? 0)} ·
+                ETA {signed(commandTrends?.metrics.average_response_minutes.change ?? 0, "m")}
+              </p>
+            </div>
+            <div className="hub-row">
+              <strong>Command Report Queue</strong>
+              <p>
+                Reports {commandReports?.report_count ?? 0} · Pending review {commandReports?.pending_review_count ?? 0}
+              </p>
+            </div>
+            <div className="button-grid">
+              <button type="button" onClick={() => setActiveModule("commandReports")} disabled={loading}>
+                Open Commander Report Review
+              </button>
+              <button type="button" onClick={() => setActiveModule("commandCallHistory")} disabled={loading}>
+                Open Shift Call History
+              </button>
+              <button type="button" onClick={() => setActiveModule("unitReadiness")} disabled={loading}>
+                Open Unit Status Board
+              </button>
+              <button type="button" onClick={() => setLiveSimPanelOpen(true)} disabled={loading}>
+                Open Live Sim Monitor
+              </button>
+            </div>
+          </article>
+          ) : null}
+          {activeModule === "commandReports" ? (
+          <article className="card panel module-overlay">
+            <h2>Commander Report Review</h2>
+            <p className="section-subtitle">
+              Reports {commandReports?.report_count ?? 0} · Pending review {commandReports?.pending_review_count ?? 0}
+            </p>
+            <div className="dispatch-form-grid">
+              <label className="form-field">
+                Review Status
+                <select value={commandReportReviewFilter} onChange={(event) => setCommandReportReviewFilter(event.target.value)}>
+                  <option value="ALL">ALL</option>
+                  <option value="PENDING">PENDING</option>
+                  <option value="APPROVED">APPROVED</option>
+                  <option value="CHANGES_REQUESTED">CHANGES_REQUESTED</option>
+                </select>
+              </label>
+              <label className="form-field">
+                Search
+                <input
+                  value={commandReportSearch}
+                  onChange={(event) => setCommandReportSearch(event.target.value)}
+                  placeholder="Report ID, incident, unit, narrative..."
+                />
+              </label>
+            </div>
+            <div className="status-strip-actions inline-controls">
+              <span className="chip">Showing {filteredCommandReports.length} of {commandReports?.report_count ?? 0} reports</span>
+              <button
+                type="button"
+                className="dispatch-secondary"
+                onClick={() => {
+                  setCommandReportReviewFilter("ALL");
+                  setCommandReportSearch("");
+                }}
+              >
+                Clear Filters
+              </button>
+            </div>
+            {commandReviewDraft ? (
+              <div className="hub-row">
+                <strong>Reviewing Narrative: {commandReviewDraft.report_id}</strong>
+                <p>
+                  Incident {commandReviewDraft.incident_id} · Unit {commandReviewDraft.unit_id} ·
+                  Status {commandReviewDraft.status} · Review {commandReviewDraft.review_status ?? "PENDING"}
+                </p>
+                <label className="form-field">
+                  Review Notes
+                  <input
+                    value={reviewNotesByReport[commandReviewDraft.report_id] ?? ""}
+                    onChange={(e) =>
+                      setReviewNotesByReport((prev) => ({
+                        ...prev,
+                        [commandReviewDraft.report_id]: e.target.value,
+                      }))
+                    }
+                    placeholder="Command review note"
+                  />
+                </label>
+                <div className="command-narrative-box">
+                  <pre>{commandReviewDraft.narrative || "No narrative entered."}</pre>
+                </div>
+                <div className="button-grid">
+                  <button
+                    type="button"
+                    onClick={() => handleReviewDecision(commandReviewDraft.report_id, "APPROVE")}
+                    disabled={loading}
+                  >
+                    Approve Narrative
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleReviewDecision(commandReviewDraft.report_id, "REJECT")}
+                    disabled={loading}
+                  >
+                    Request Changes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCommandReviewDraft(null)}
+                    disabled={loading}
+                  >
+                    Close Narrative
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="dispatch-banner">
+                Select a report below to open the full narrative for review.
+              </div>
+            )}
+            {commandReviewError ? <div className="dispatch-banner warn">{commandReviewError}</div> : null}
+            {filteredCommandReports.map((item) => (
+              <div key={`command-report-${item.report_id}`} className="hub-row">
+                <strong>{item.report_id} · {item.incident_id}</strong>
+                <p>{item.unit_id} · {item.status} · Review {item.review_status ?? "PENDING"} · Updated {item.updated_at}</p>
+                <p>
+                  {item.primary_code ? `${item.primary_code} · ` : ""}{item.call_type ?? "Incident"} ·
+                  Priority {item.priority ?? "-"} · Incident {item.incident_status ?? "UNKNOWN"} ·
+                  {item.disposition_code ? ` Dispo ${item.disposition_code}` : " Disposition pending"}
+                </p>
+                <p>{item.narrative_preview || "No narrative preview."}</p>
+                {item.review_notes ? <p>Latest notes: {item.review_notes}</p> : null}
+                <div className="button-grid">
+                  <button
+                    type="button"
+                    onClick={() => handleOpenCommandNarrative(item.report_id)}
+                    disabled={loading || commandReviewBusy}
+                  >
+                    {commandReviewDraft?.report_id === item.report_id ? "Narrative Open" : "Review Narrative"}
+                  </button>
+                </div>
+              </div>
+            ))}
+            {(commandReports?.reports ?? []).length === 0 ? (
+              <div className="dispatch-banner warn">
+                No reports yet. During live simulation, reports appear after officers go on-scene and finalize dispositions.
+              </div>
+            ) : null}
+            {(commandReports?.reports ?? []).length > 0 && filteredCommandReports.length === 0 ? (
+              <div className="dispatch-banner warn">
+                No reports match current commander filters.
+              </div>
+            ) : null}
+          </article>
+          ) : null}
+          {activeModule === "commandCallHistory" ? (
+          <article className="card panel module-overlay">
+            <h2>Commander Shift Call History</h2>
+            <p className="section-subtitle">
+              Date {commandCallHistory?.history_date_utc ?? commandHistoryDate} · Shift {commandCallHistory?.shift_filter ?? commandHistoryShift} ·
+              Calls {commandCallHistory?.call_count ?? 0} · Reports {commandCallHistory?.report_count ?? 0}
+            </p>
+            <div className="template-row">
+              <label className="form-field">
+                Shift Date (UTC)
+                <input
+                  type="date"
+                  value={commandHistoryDate}
+                  onChange={(e) => setCommandHistoryDate(e.target.value || new Date().toISOString().slice(0, 10))}
+                />
+              </label>
+              <label className="form-field">
+                Shift
+                <select value={commandHistoryShift} onChange={(e) => setCommandHistoryShift(e.target.value)}>
+                  <option value="ALL">ALL</option>
+                  <option value="DAY">DAY</option>
+                  <option value="SWING">SWING</option>
+                  <option value="GRAVE">GRAVE</option>
+                </select>
+              </label>
+            </div>
+            <div className="button-grid">
+              <button type="button" onClick={() => void refreshDashboard()} disabled={loading}>
+                Refresh Shift History
+              </button>
+              <button type="button" onClick={() => setActiveModule("commandReports")} disabled={loading}>
+                Open Report Review Queue
+              </button>
+            </div>
+            <div className="dispatch-form-grid">
+              <label className="form-field wide">
+                Search Calls
+                <input
+                  value={commandCallSearch}
+                  onChange={(event) => setCommandCallSearch(event.target.value)}
+                  placeholder="Incident, call type, location, officer, disposition..."
+                />
+              </label>
+            </div>
+            <div className="status-strip-actions inline-controls">
+              <span className="chip">Showing {filteredCommandCalls.length} of {commandCallHistory?.call_count ?? 0} calls</span>
+              <button type="button" className="dispatch-secondary" onClick={() => setCommandCallSearch("")}>
+                Clear Search
+              </button>
+            </div>
+            <div className="dispatch-banner">
+              Resolved {commandCallHistory?.resolved_count ?? 0} · Open {commandCallHistory?.open_count ?? 0} ·
+              Timeline lines {commandCallHistory?.timeline_line_count ?? 0}
+            </div>
+            {filteredCommandCalls.map((item) => (
+              <div key={`command-history-${item.incident_id}`} className="hub-row">
+                <strong>{item.incident_id} · {item.call_display || item.call_type} · P{item.priority}</strong>
+                <p>{item.address}</p>
+                <p>
+                  Created {item.created_at}
+                  {item.closed_at ? ` · Closed ${item.closed_at}` : ""}
+                  {item.assigned_shift ? ` · Shift ${item.assigned_shift}` : ""}
+                </p>
+                <p>
+                  Assigned: {item.assigned_callsign ? `${item.assigned_callsign} (${item.assigned_officer ?? "Unassigned"})` : "Not yet assigned"} ·
+                  Handled by: {item.handling_unit_label ?? item.assigned_unit_id ?? "Unknown"}
+                </p>
+                <p>
+                  Disposition: {item.disposition_code ?? "PENDING"}
+                  {item.disposition_summary ? ` · ${item.disposition_summary}` : ""}
+                </p>
+                <div className="button-grid">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedIncidentId(item.incident_id);
+                      setActiveModule("queue");
+                    }}
+                    disabled={loading}
+                  >
+                    Open Incident
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveModule("commandReports")}
+                    disabled={loading}
+                  >
+                    Open Command Reports
+                  </button>
+                </div>
+                <div className="timeline-list">
+                  {item.timeline_lines.map((line) => (
+                    <div key={`${item.incident_id}-line-${line.line_no}-${line.time}`} className="timeline-item">
+                      <strong>Line {line.line_no} · {line.event}</strong>
+                      <p>{line.time}{line.unit_label ? ` · ${line.unit_label}` : ""}</p>
+                      <p>{line.line}</p>
+                    </div>
+                  ))}
+                  {item.timeline_lines.length === 0 ? (
+                    <div className="timeline-item">
+                      <strong>Timeline</strong>
+                      <p>No timeline actions recorded.</p>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="timeline-list">
+                  {item.reports.map((report) => (
+                    <div key={`${item.incident_id}-report-${report.report_id}`} className="timeline-item">
+                      <strong>Report {report.report_id}</strong>
+                      <p>
+                        {report.unit_label ?? report.unit_id ?? "Unit unknown"} · {report.status}
+                        {report.review_status ? ` · Review ${report.review_status}` : ""}
+                        {report.updated_at ? ` · Updated ${report.updated_at}` : ""}
+                      </p>
+                      <p>Evidence links: {report.evidence_count}</p>
+                      <p>{(report.narrative ?? "").trim() ? (report.narrative as string).slice(0, 360) : "No narrative entered."}</p>
+                      {report.review_notes ? <p>Notes: {report.review_notes}</p> : null}
+                      <div className="button-grid">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveModule("commandReports");
+                            void handleOpenCommandNarrative(report.report_id);
+                          }}
+                          disabled={loading || commandReviewBusy}
+                        >
+                          Review Full Narrative
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {item.reports.length === 0 ? (
+                    <div className="timeline-item">
+                      <strong>Reports</strong>
+                      <p>No report linked yet.</p>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+            {(commandCallHistory?.calls ?? []).length === 0 ? (
+              <div className="dispatch-banner warn">
+                No calls found for this shift filter. Start live simulation or adjust date/shift filters.
+              </div>
+            ) : null}
+            {(commandCallHistory?.calls ?? []).length > 0 && filteredCommandCalls.length === 0 ? (
+              <div className="dispatch-banner warn">
+                No shift calls match your search filter.
+              </div>
+            ) : null}
           </article>
           ) : null}
           {activeModule === "unitReadiness" ? (
-          <article className="card panel">
-            <h2>Unit Availability Board</h2>
-            <p className="section-subtitle">Available units and active dispositions for unavailable units.</p>
+          <article className="card panel module-overlay">
+            <h2>CAD Unit Status Board</h2>
+            <p className="section-subtitle">Dispatcher view of all on-shift units, statuses, elapsed state time, and active events.</p>
             <div className="kpi-grid">
               <div className="kpi"><span>Available</span><strong>{availabilityBoard?.summary.available_count ?? 0}</strong></div>
-              <div className="kpi"><span>Unavailable</span><strong>{availabilityBoard?.summary.unavailable_count ?? 0}</strong></div>
-              <div className="kpi"><span>Active Assignments</span><strong>{availabilityBoard?.summary.active_assignments ?? 0}</strong></div>
-              <div className="kpi"><span>Break Flags</span><strong>{unitBoard?.break_recommendations.length ?? 0}</strong></div>
+              <div className="kpi"><span>Busy</span><strong>{availabilityBoard?.summary.unavailable_count ?? 0}</strong></div>
+              <div className="kpi"><span>Active Events</span><strong>{workflowBoard?.summary.active_calls ?? 0}</strong></div>
+              <div className="kpi"><span>Assignments</span><strong>{availabilityBoard?.summary.active_assignments ?? 0}</strong></div>
             </div>
-            <div className="hub-grid">
-              <div className="hub-col">
-                <h3>Available Units</h3>
-                {(availabilityBoard?.available_units ?? []).map((unit) => (
-                  <div key={unit.unit_id} className="hub-row">
-                    <strong>{unit.callsign} · {unit.officer_name} · {unit.role}</strong>
-                    <p>{unit.unit_id} · {unit.status_code} · Shift {unit.shift ?? "n/a"} · Beat {unit.beat ?? "n/a"}</p>
-                    <p>Location: {unit.current_location}</p>
-                    <p>Dispatch: {unit.dispatch_note}</p>
-                    <p>Skills: {unit.skills.join(", ") || "n/a"}</p>
-                  </div>
-                ))}
-                {(availabilityBoard?.available_units ?? []).length === 0 ? <div className="dispatch-banner">No units currently available.</div> : null}
-              </div>
-              <div className="hub-col">
-                <h3>Unavailable Unit Dispositions</h3>
-                {(availabilityBoard?.unavailable_units ?? []).map((unit) => (
-                  <div key={unit.unit_id} className="hub-row">
-                    <strong>{unit.callsign} · {unit.officer_name} · {unit.role}</strong>
-                    <p>Status code: {unit.status_code} · Incident status: {unit.incident_status}</p>
-                    <p>{unit.call_display ?? unit.call_type} · {unit.current_location} · Shift {unit.shift ?? "n/a"} · Beat {unit.beat ?? "n/a"}</p>
-                    <p>
-                      {unit.incident_id ? `Incident ${unit.incident_id}` : "No active incident"} · Last action {unit.last_action}
-                      {unit.predicted_eta_minutes ? ` · ETA ${unit.predicted_eta_minutes}m` : ""}
-                    </p>
-                    <p>Dispatch: {unit.dispatch_note}</p>
-                    <p>
-                      Disposition: {unit.disposition_code ?? "Pending"}
-                      {unit.disposition_summary ? ` · ${unit.disposition_summary}` : ""}
-                    </p>
-                  </div>
-                ))}
-                {(availabilityBoard?.unavailable_units ?? []).length === 0 ? <div className="dispatch-banner">No units currently unavailable.</div> : null}
-              </div>
+            <div className="dispatch-form-grid status-board-controls">
+              <label className="form-field">
+                Unit / Event Search
+                <input
+                  value={statusBoardSearch}
+                  onChange={(event) => setStatusBoardSearch(event.target.value)}
+                  placeholder="Call sign, location, event, comment..."
+                />
+              </label>
+              <label className="form-field">
+                Status Class
+                <select value={statusBoardToneFilter} onChange={(event) => setStatusBoardToneFilter(event.target.value)}>
+                  <option value="ALL">ALL</option>
+                  <option value="available">AVAILABLE</option>
+                  <option value="busy">BUSY</option>
+                  <option value="enroute">EN ROUTE</option>
+                  <option value="offduty">OFF DUTY</option>
+                  <option value="other">OTHER</option>
+                </select>
+              </label>
             </div>
-            <h2>Readiness Ranking</h2>
-            {(unitBoard?.units ?? []).slice(0, 6).map((unit) => (
-              <div key={unit.unit_id} className="hub-row">
-                <strong>{unit.callsign} · {unit.status}</strong>
-                <p>{unit.unit_id} · Assignments {unit.active_assignments} · Fatigue {unit.fatigue_score} · Workload {unit.workload_score}</p>
-                <div className="readiness-bar"><div className={`readiness-fill ${unit.requires_break ? "risk" : ""}`} style={{ width: `${unit.readiness_score}%` }} /></div>
-                <p>Readiness {unit.readiness_score}/100 · {unit.requires_break ? "Break recommended" : "Operational"}</p>
+            <div className="status-strip-actions inline-controls">
+              <span className="chip">Showing {filteredStatusBoardRows.length} of {statusBoardRows.length} units</span>
+              <button
+                type="button"
+                className="dispatch-secondary"
+                onClick={() => {
+                  setStatusBoardSearch("");
+                  setStatusBoardToneFilter("ALL");
+                }}
+              >
+                Reset View
+              </button>
+            </div>
+            <div className="status-board-wrap">
+              <table className="status-board-table">
+                <thead>
+                  <tr>
+                    <th>Unit</th>
+                    <th>Status</th>
+                    <th>Elapsed</th>
+                    <th>Event #</th>
+                    <th>Call / Event</th>
+                    <th>Location</th>
+                    <th>Comment</th>
+                    <th>Msg</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredStatusBoardRows.map((row) => (
+                    <tr
+                      key={`status-${row.unit_id}`}
+                      className={`status-row ${row.tone} ${row.incident_id ? "interactive" : ""}`}
+                      onClick={() => {
+                        if (!row.incident_id) return;
+                        setSelectedIncidentId(row.incident_id);
+                        setActiveModule("queue");
+                      }}
+                      title={row.incident_id ? `Open ${row.incident_id}` : `${row.callsign} status`}
+                    >
+                      <td>{row.callsign}</td>
+                      <td>
+                        <span className={`status-pill ${row.tone}`}>{row.status_short}</span>
+                      </td>
+                      <td>{row.elapsed}</td>
+                      <td>{row.event_no}</td>
+                      <td>{row.call_label}</td>
+                      <td>{row.location}</td>
+                      <td>{row.comment}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="status-row-message-btn"
+                          disabled={row.unit_id === statusUnitId}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openMessagingThread(row.unit_id);
+                          }}
+                        >
+                          Msg
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {statusBoardRows.length === 0 ? <div className="dispatch-banner">No units loaded for status board.</div> : null}
+              {statusBoardRows.length > 0 && filteredStatusBoardRows.length === 0 ? <div className="dispatch-banner warn">No units match current board filters.</div> : null}
+            </div>
+            {(unitBoard?.break_recommendations ?? []).length > 0 ? (
+              <div className="dispatch-banner warn">
+                Readiness alerts: {(unitBoard?.break_recommendations ?? []).slice(0, 4).join(" | ")}
               </div>
-            ))}
+            ) : null}
           </article>
           ) : null}
           {activeModule === "opTrends" ? (
-          <article className="card panel">
+          <article className="card panel module-overlay">
             <h2>Operational Trends</h2>
             <p className="section-subtitle">Last {commandTrends?.periods ?? 0} snapshots</p>
             <div className="hub-row">
@@ -3783,7 +5196,7 @@ export default function App() {
           </article>
           ) : null}
           {activeModule === "reviewQueue" ? (
-          <article className="card panel">
+          <article className="card panel module-overlay">
             <h2>Supervisor Review Queue</h2>
             <p className="section-subtitle">{reviewQueue?.review_count ?? 0} reports flagged for review</p>
             {(reviewQueue?.reports ?? []).slice(0, 5).map((item) => (
@@ -3812,7 +5225,7 @@ export default function App() {
           </article>
           ) : null}
           {activeModule === "reportingMetrics" ? (
-          <article className="card panel">
+          <article className="card panel module-overlay">
             <h2>Reporting Pipeline Metrics</h2>
             <div className="kpi-grid">
               <div className="kpi"><span>Total Reports</span><strong>{reportingMetrics?.total_reports ?? 0}</strong></div>
@@ -3827,7 +5240,7 @@ export default function App() {
           ) : null}
 
           {activeModule === "aiOps" ? (
-          <article className="card panel">
+          <article className="card panel module-overlay">
             <h2>AI Operations Engine</h2>
             <p className="section-subtitle">Incident: {selectedIncident?.incident_id ?? "None selected"}</p>
             <label className="form-field">Prompt<input value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} /></label>
@@ -3841,7 +5254,7 @@ export default function App() {
           ) : null}
 
           {activeModule === "recommendation" ? (
-          <article className="card panel">
+          <article className="card panel module-overlay">
             <h2>Recommendation Engine</h2>
             <p className="section-subtitle">Selected incident: <strong>{selectedIncident?.incident_id ?? "None"}</strong></p>
             {riskProfile ? <div className="dispatch-banner">Risk {riskProfile.risk_score}/100 - history {riskProfile.history_count} - alerts: {riskProfile.safety_alerts.join(" | ") || "none"}</div> : null}
@@ -3855,7 +5268,7 @@ export default function App() {
           ) : null}
 
           {activeModule === "disposition" ? (
-          <article className="card panel">
+          <article className="card panel module-overlay">
             <h2>Call Disposition</h2>
             {reportReadiness ? (
               <div className={`dispatch-banner ${reportReadiness.has_disposition ? "success" : "warn"}`}>
@@ -3907,7 +5320,7 @@ export default function App() {
           ) : null}
 
           {activeModule === "mobileControls" ? (
-          <article className="card panel">
+          <article className="card panel module-overlay">
             <h2>Mobile Officer Controls</h2>
             <div className="dispatch-form-grid">
               <label className="form-field">Unit<select value={statusUnitId} onChange={(e) => setStatusUnitId(e.target.value)}>{units.map((u) => <option key={u.unit_id} value={u.unit_id}>{u.callsign} ({u.unit_id})</option>)}</select></label>
@@ -3953,122 +5366,129 @@ export default function App() {
           ) : null}
 
           {activeModule === "messaging" ? (
-          <article className="card panel">
+          <article className="card panel module-overlay messaging-overlay">
             <h2>Messaging Hub</h2>
             <p className="section-subtitle">
-              Unit {statusUnitId} · Contacts online {messagingContacts.length} · Inbox {messageInbox?.message_count ?? 0}
+              Unit {statusUnitLabel} · Contacts {messagingContacts.length} · Inbox {messageInbox?.message_count ?? 0} · Unread {unreadThreadTotal}
             </p>
-            <div className="messaging-shell">
-              <aside className="messaging-roster">
-                <div className="search-row">
+            <div className="messaging-modern-shell">
+              <section className="messaging-thread-rail">
+                <label className="form-field">
+                  Search Threads
                   <input
-                    value={messageContactSearch}
-                    onChange={(e) => setMessageContactSearch(e.target.value)}
-                    placeholder="Search officer, callsign, or unit..."
+                    value={messageThreadSearch}
+                    onChange={(event) => setMessageThreadSearch(event.target.value)}
+                    placeholder="Name, unit, status..."
                   />
-                </div>
-                <div className="messaging-contact-list">
-                  {filteredMessagingContacts.map((contact) => (
-                    <button
-                      key={contact.unit_id}
-                      type="button"
-                      className={`message-contact ${messageTarget === contact.unit_id ? "active" : ""}`}
-                      onClick={() => setMessageTarget(contact.unit_id)}
-                    >
-                      <div>
-                        <strong>{contact.display_name}</strong>
-                        <p>{contact.subtitle}</p>
-                        {contact.last_message_preview ? <p>{contact.last_message_preview}</p> : null}
-                      </div>
-                      <div className="message-contact-meta">
-                        {contact.unread_count > 0 ? <span className="badge soft ok">{contact.unread_count}</span> : null}
-                        <span className="badge soft">{contact.status}</span>
-                      </div>
-                    </button>
-                  ))}
-                  {filteredMessagingContacts.length === 0 ? <div className="dispatch-banner warn">No contacts match your search.</div> : null}
-                </div>
-              </aside>
-              <section className="messaging-thread">
-                <div className="dispatch-form-grid">
-                  <label className="form-field">
-                    Recipient
-                    <select value={messageTarget} onChange={(e) => setMessageTarget(e.target.value)}>
-                      {messagingContacts.map((contact) => (
-                        <option key={contact.unit_id} value={contact.unit_id}>
-                          {contact.display_name} ({contact.unit_id})
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="form-field">
-                    Priority
-                    <select value={messagePriority} onChange={(e) => setMessagePriority(e.target.value)}>
-                      <option value="NORMAL">NORMAL</option>
-                      <option value="HIGH">HIGH</option>
-                      <option value="URGENT">URGENT</option>
-                    </select>
-                  </label>
-                  <label className="form-field">
-                    Incident Channel
-                    <input value={channelIncidentId} onChange={(e) => setChannelIncidentId(e.target.value)} placeholder="INC-..." />
-                  </label>
-                  <label className="form-field">
-                    Unread From Contact
-                    <input value={String(activeMessagingContact?.unread_count ?? 0)} readOnly />
-                  </label>
-                  <label className="form-field wide">
-                    Message
-                    <textarea value={messageBody} onChange={(e) => setMessageBody(e.target.value)} placeholder="Short tactical update..." />
-                  </label>
-                </div>
-                <div className="toggle-row">
-                  <label><input type="checkbox" checked={sendToIncidentChannel} onChange={(e) => setSendToIncidentChannel(e.target.checked)} /> Tag to incident channel</label>
-                </div>
-                <div className="dev-actions"><button type="button" onClick={handleSendMessage} disabled={loading || !messageBody.trim() || !messageTarget}>Send Secure Message</button></div>
-                {messageStatus ? <div className="dispatch-banner">{messageStatus}</div> : null}
-                <div className="dispatch-banner">
-                  Active conversation: {(activeMessagingContact?.display_name ?? messageTarget) || "None"}{activeMessagingContact?.last_message_at ? ` · last ${activeMessagingContact.last_message_at}` : ""}
-                </div>
-                <div className="timeline-list messaging-thread-list">
-                  {directConversation.length === 0 ? (
-                    <div className="dispatch-banner warn">No direct messages yet. Send the first message to start this thread.</div>
+                </label>
+                <div className="messaging-thread-rail-list">
+                  {filteredMessagingThreads.length === 0 ? (
+                    <div className="dispatch-banner warn">No matching threads.</div>
                   ) : (
-                    directConversation.map((message) => (
-                      <div
-                        key={`direct-${message.message_id}`}
-                        className={`message-bubble ${message.from_unit === statusUnitId ? "outbound" : "inbound"}`}
+                    filteredMessagingThreads.map((contact) => (
+                      <button
+                        key={`thread-${contact.unit_id}`}
+                        type="button"
+                        className={`message-thread-preview ${contact.unit_id === messageTarget ? "active" : ""}`}
+                        onClick={() => setMessageTarget(contact.unit_id)}
                       >
-                        <strong>{message.from_unit === statusUnitId ? "You" : message.from_unit}</strong>
-                        <p>{message.sent_at}</p>
-                        <p>{message.priority ?? "NORMAL"} {message.incident_id ? `· ${message.incident_id}` : ""}</p>
-                        <p>{message.body}</p>
-                      </div>
+                        <div className="message-thread-preview-main">
+                          <div className="message-thread-preview-title">
+                            <strong>{contact.display_name}</strong>
+                            <span className={`thread-status-pill ${statusTone(contact.status)}`}>{contact.subtitle || normalizeStatusLabel(contact.status)}</span>
+                          </div>
+                          <p>{typingByUnit[contact.unit_id] ? "Typing..." : contact.last_message_preview ?? "No messages yet."}</p>
+                        </div>
+                        <div className="message-thread-preview-meta">
+                          <span>{formatMessageTimestamp(contact.last_message_at)}</span>
+                          {contact.unread_count > 0 ? <span className="badge soft">{contact.unread_count}</span> : null}
+                        </div>
+                      </button>
                     ))
                   )}
                 </div>
               </section>
-            </div>
-            <div className="hub-row">
-              <strong>Incident Channel {(incidentChannel?.incident_id ?? channelIncidentId) || "Not selected"}</strong>
-              <p>Shared incident traffic for all units tagged to the call.</p>
-            </div>
-            <div className="timeline-list">
-              {(incidentChannel?.messages ?? []).slice(0, 6).map((message) => (
-                <div key={`channel-${message.message_id}`} className="timeline-item">
-                  <strong>{message.from_unit}</strong>
-                  <p>{message.sent_at}</p>
-                  <p>{message.priority ?? "NORMAL"}</p>
-                  <p>{message.body}</p>
+              <section className="messaging-thread messaging-conversation-pane">
+                <div className="messaging-conversation-head">
+                  <div>
+                    <strong>{activeMessagingContact?.display_name ?? compactUnitLabel({ unit_id: messageTarget })}</strong>
+                    <p>{activeContactTyping ? "Typing..." : "Secure direct messaging channel"}</p>
+                  </div>
+                  <div className="messaging-conversation-head-actions">
+                    <span className={`thread-status-pill ${statusTone(activeMessagingContact?.status)}`}>
+                      {normalizeStatusLabel(activeMessagingContact?.status)}
+                    </span>
+                    {activeMessagingUnit ? (
+                      <button
+                        type="button"
+                        className="dispatch-secondary compact"
+                        onClick={() => {
+                          if (!mapRef.current) return;
+                          mapRef.current.flyTo({
+                            center: [activeMessagingUnit.coordinates.lon, activeMessagingUnit.coordinates.lat],
+                            zoom: 14,
+                            speed: 0.8,
+                          });
+                        }}
+                      >
+                        Center Unit
+                      </button>
+                    ) : null}
+                    {canDispatchModules ? (
+                      <button
+                        type="button"
+                        className="dispatch-secondary compact"
+                        onClick={() => setActiveModule("unitReadiness")}
+                      >
+                        Unit Board
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
-              ))}
+                <div ref={messageThreadListRef} className="timeline-list messaging-thread-list">
+                  {directConversation.length === 0 ? (
+                    <div className="dispatch-banner warn">No messages yet.</div>
+                  ) : (
+                    directConversation.map((message) => {
+                      const outbound = message.from_unit === statusUnitId;
+                      const counterpartId = outbound ? message.to_unit : message.from_unit;
+                      const counterpart = units.find((item) => item.unit_id === counterpartId);
+                      const counterpartLabel = compactUnitLabel(counterpart ?? { unit_id: counterpartId });
+                      return (
+                        <div key={`direct-${message.message_id}`} className={`message-bubble ${outbound ? "outbound" : "inbound"}`}>
+                          <strong>{outbound ? `You -> ${counterpartLabel}` : counterpartLabel}</strong>
+                          <p>{formatMessageTimestamp(message.sent_at)}</p>
+                          <p>{message.body}</p>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+                <div className="message-composer-row">
+                  <textarea
+                    value={messageBody}
+                    onChange={(e) => setMessageBody(e.target.value)}
+                    onKeyDown={handleMessageInputKeyDown}
+                    placeholder="Type a secure message... (Enter to send, Shift+Enter for new line)"
+                  />
+                  <button type="button" onClick={handleSendMessage} disabled={loading || !messageBody.trim() || !messageTarget}>
+                    Send
+                  </button>
+                </div>
+                <div className="message-composer-meta">
+                  <span>{messageBody.trim().length} chars</span>
+                  <span>Enter to send · Shift+Enter newline</span>
+                </div>
+                {messageStatus ? <div className="dispatch-banner">{messageStatus}</div> : null}
+              </section>
             </div>
           </article>
           ) : null}
 
-          {activeModule === "hotkeys" ? <article className="card panel">
+          {activeModule === "hotkeys" ? <article className="card panel module-overlay">
             <h2>Hotkeys</h2>
             <div className="hub-row"><strong>View Navigation</strong><p>Alt+1 Dispatch · Alt+2 Field · Alt+3 Report · Alt+4 Intel</p></div>
+            <div className="hub-row"><strong>Module Jump</strong><p>Alt+Q Queue · Alt+U Unit Board · Alt+M Messaging</p></div>
             <div className="hub-row"><strong>Field Actions</strong><p>A Accept · E En Route · O On Scene · C Clear (requires disposition)</p></div>
           </article> : null}
         </aside> : null}
