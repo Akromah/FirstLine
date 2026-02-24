@@ -2563,6 +2563,16 @@ export default function App() {
     setActiveModule("messaging");
   }
 
+  function openIncidentFromBoard(incidentId: string) {
+    if (!incidentId) return;
+    setSelectedIncidentId(incidentId);
+    if (canDispatchModules) {
+      setActiveModule("queue");
+    } else {
+      setActiveModule("fieldOps");
+    }
+  }
+
   function messageRecipientBusy(unitId: string): boolean {
     const recipient = units.find((item) => item.unit_id === unitId);
     if (!recipient) return false;
@@ -3255,6 +3265,18 @@ export default function App() {
       }),
     [statusBoardRows, statusBoardToneFilter, statusBoardSearchQuery]
   );
+  const boardQueuedCalls = useMemo(
+    () => (workflowBoard?.active_workflows ?? []).filter((row) => row.status === "NEW").slice(0, 12),
+    [workflowBoard]
+  );
+  const boardActiveCalls = useMemo(
+    () =>
+      (workflowBoard?.active_workflows ?? [])
+        .filter((row) => row.status !== "NEW")
+        .sort((a, b) => b.priority - a.priority)
+        .slice(0, 12),
+    [workflowBoard]
+  );
   const commandReportSearchQuery = commandReportSearch.trim().toLowerCase();
   const commandCallSearchQuery = commandCallSearch.trim().toLowerCase();
   const filteredCommandCalls = useMemo(
@@ -3326,7 +3348,7 @@ export default function App() {
     { id: "queue", label: "Active Queue", icon: "Q", group: "ops", visible: canDispatchModules, badge: moduleCounts.queue },
     { id: "priorityRadar", label: "Priority Radar", icon: "RAD", group: "ops", visible: canDispatchModules, badge: moduleCounts.priorityRadar },
     { id: "recommendation", label: "Unit Recs", icon: "REC", group: "ops", visible: canDispatchModules },
-    { id: "unitReadiness", label: "Unit Board", icon: "UNIT", group: "ops", visible: canDispatchModules, badge: moduleCounts.unitReadiness },
+    { id: "unitReadiness", label: "Unit Board", icon: "UNIT", group: "ops", visible: canDispatchModules || canOfficerModules, badge: moduleCounts.unitReadiness },
     { id: "fieldOps", label: "Field Ops", icon: "OPS", group: "field", visible: canOfficerModules },
     { id: "assignedDeck", label: "Assigned Deck", icon: "CAR", group: "field", visible: canOfficerModules, badge: moduleCounts.assignedDeck },
     { id: "callHistory", label: "Call History", icon: "HIS", group: "field", visible: canOfficerModules, badge: moduleCounts.callHistory },
@@ -3378,7 +3400,7 @@ export default function App() {
     .filter((group) => group.items.length > 0);
   const sideRailModuleButtons = useMemo(() => {
     const preferred: ModulePanel[] = isOfficer
-      ? ["mapOnly", "assignedDeck", "callHistory", "reportHub", "disposition", "messaging", "policyHub"]
+      ? ["mapOnly", "assignedDeck", "unitReadiness", "callHistory", "reportHub", "disposition", "messaging"]
       : ["mapOnly", "queue", "unitReadiness", "commandDash", "commandCallHistory", "commandReports", "messaging"];
     const visibleById = new Map(visibleModuleButtons.map((item) => [item.id, item] as const));
     const ordered = preferred
@@ -5080,7 +5102,7 @@ export default function App() {
           {activeModule === "unitReadiness" ? (
           <article className="card panel module-overlay">
             <h2>CAD Unit Status Board</h2>
-            <p className="section-subtitle">Dispatcher view of all on-shift units, statuses, elapsed state time, and active events.</p>
+            <p className="section-subtitle">Shared operations picture for dispatch, patrol, and command with unit status plus queued and active calls.</p>
             <div className="kpi-grid">
               <div className="kpi"><span>Available</span><strong>{availabilityBoard?.summary.available_count ?? 0}</strong></div>
               <div className="kpi"><span>Busy</span><strong>{availabilityBoard?.summary.unavailable_count ?? 0}</strong></div>
@@ -5142,8 +5164,7 @@ export default function App() {
                       className={`status-row ${row.tone} ${row.incident_id ? "interactive" : ""}`}
                       onClick={() => {
                         if (!row.incident_id) return;
-                        setSelectedIncidentId(row.incident_id);
-                        setActiveModule("queue");
+                        openIncidentFromBoard(row.incident_id);
                       }}
                       title={row.incident_id ? `Open ${row.incident_id}` : `${row.callsign} status`}
                     >
@@ -5175,6 +5196,48 @@ export default function App() {
               </table>
               {statusBoardRows.length === 0 ? <div className="dispatch-banner">No units loaded for status board.</div> : null}
               {statusBoardRows.length > 0 && filteredStatusBoardRows.length === 0 ? <div className="dispatch-banner warn">No units match current board filters.</div> : null}
+            </div>
+            <div className="hub-grid">
+              <div className="hub-col">
+                <h3>Queued Calls ({workflowBoard?.summary.queued_calls ?? 0})</h3>
+                <div className="timeline-list">
+                  {boardQueuedCalls.map((item) => (
+                    <button key={`board-queued-${item.incident_id}`} type="button" className="list-row" onClick={() => openIncidentFromBoard(item.incident_id)}>
+                      <div>
+                        <strong>{item.incident_id} · {item.call_display || item.call_type}</strong>
+                        <p>{item.address}</p>
+                        <p>Status {item.status} · Phase {item.phase} · Elapsed {item.elapsed_minutes}m</p>
+                      </div>
+                      <div className="queue-meta">
+                        <span className="badge">P{item.priority}</span>
+                        <span className="badge soft">QUEUE</span>
+                      </div>
+                    </button>
+                  ))}
+                  {boardQueuedCalls.length === 0 ? <div className="dispatch-banner">No queued calls right now.</div> : null}
+                </div>
+              </div>
+              <div className="hub-col">
+                <h3>Active Calls ({workflowBoard?.summary.active_calls ?? 0})</h3>
+                <div className="timeline-list">
+                  {boardActiveCalls.map((item) => (
+                    <button key={`board-active-${item.incident_id}`} type="button" className="list-row" onClick={() => openIncidentFromBoard(item.incident_id)}>
+                      <div>
+                        <strong>{item.incident_id} · {item.call_display || item.call_type}</strong>
+                        <p>{item.address}</p>
+                        <p>
+                          {item.assigned_callsign ?? "Awaiting unit"} · {item.status} · {item.phase} · Elapsed {item.elapsed_minutes}m
+                        </p>
+                      </div>
+                      <div className="queue-meta">
+                        <span className="badge">P{item.priority}</span>
+                        <span className="badge soft">{item.status}</span>
+                      </div>
+                    </button>
+                  ))}
+                  {boardActiveCalls.length === 0 ? <div className="dispatch-banner">No active calls beyond queue.</div> : null}
+                </div>
+              </div>
             </div>
             {(unitBoard?.break_recommendations ?? []).length > 0 ? (
               <div className="dispatch-banner warn">
