@@ -1050,6 +1050,7 @@ export default function App() {
   const dictationStartRef = useRef<number | null>(null);
   const commandPaletteInputRef = useRef<HTMLInputElement | null>(null);
   const messageThreadListRef = useRef<HTMLDivElement | null>(null);
+  const messagingContextUnitRef = useRef<string | null>(null);
   const messageStatusTimerRef = useRef<number | null>(null);
   const simNoticeTimerRef = useRef<number | null>(null);
   const simulatedReplyTimersRef = useRef<number[]>([]);
@@ -3518,10 +3519,15 @@ export default function App() {
 
   useEffect(() => {
     if (!statusUnitId || messagingContacts.length === 0) return;
+    if (messagingContextUnitRef.current === statusUnitId) return;
+    messagingContextUnitRef.current = statusUnitId;
     const preferredTarget = messageTargetByUnit[statusUnitId];
-    if (!preferredTarget || preferredTarget === messageTarget) return;
-    if (messagingContacts.some((contact) => contact.unit_id === preferredTarget)) {
+    if (preferredTarget && messagingContacts.some((contact) => contact.unit_id === preferredTarget)) {
       setMessageTarget(preferredTarget);
+      return;
+    }
+    if (!messagingContacts.some((contact) => contact.unit_id === messageTarget)) {
+      setMessageTarget(messagingContacts[0].unit_id);
     }
   }, [statusUnitId, messagingContacts, messageTargetByUnit, messageTarget]);
 
